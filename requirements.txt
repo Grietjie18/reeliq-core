@@ -2,3 +2,5 @@ fastapi
 uvicorn
 numpy
 scipy
+copernicusmarine
+xarray
