@@ -2,7 +2,4 @@ fastapi
 uvicorn
 numpy
 scipy
-xarray
-copernicusmarine
-netCDF4
-dask
+
