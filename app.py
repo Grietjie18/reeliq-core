@@ -1,7 +1,7 @@
 import uvicorn
 import json
+import os
 import numpy as np
-import copernicusmarine
 from fastapi import FastAPI
 from fastapi.responses import HTMLResponse
 from scipy.interpolate import griddata
@@ -10,36 +10,11 @@ from schema import Observation
 app = FastAPI()
 fleet_status = {}
 
-# --- SATELLITE ENGINE ---
-def get_satellite_background():
-    try:
-        # Pulling Level 4 Gap-Filled SST (Sea Surface Temp)
-        DATASET_ID = "METOFFICE-GLO-SST-L4-NRT-OBS-SST-V2"
-        
-        # J-Bay Bounding Box
-        ds = copernicusmarine.open_dataset(
-            dataset_id=DATASET_ID,
-            minimum_longitude=24.8, maximum_longitude=25.2,
-            minimum_latitude=-34.2, maximum_latitude=-33.9
-        )
-        
-        # Latest frame converted from Kelvin to Celsius
-        latest_sst = ds.analysed_sst.isel(time=-1) - 273.15
-        
-        # Convert to a flat list of points for the interpolation engine
-        lats = latest_sst.latitude.values
-        lons = latest_sst.longitude.values
-        vals = latest_sst.values
-        
-        sat_points = []
-        for i, lat in enumerate(lats):
-            for j, lon in enumerate(lons):
-                if not np.isnan(vals[i,j]):
-                    sat_points.append([lat, lon, float(vals[i,j])])
-        return sat_points
-    except Exception as e:
-        print(f"Satellite Fetch Error: {e}")
-        return []
+# Load the "Baseline" (Fake Satellite)
+def get_baseline():
+    path = os.path.join(os.path.dirname(__file__), "satellite_data.json")
+    with open(path, "r") as f:
+        return json.load(f)
 
 @app.post("/ingest/{vessel_id}")
 async def ingest_data(vessel_id: str, obs: Observation):
@@ -49,54 +24,50 @@ async def ingest_data(vessel_id: str, obs: Observation):
 
 @app.get("/", response_class=HTMLResponse)
 async def map_dashboard():
-    # 1. Get Satellite Data (The Background)
-    sat_data = get_satellite_background()
-    
-    # 2. Get Boat Data (The Ground Truth)
-    boat_lats = [o['latitude'] for o in fleet_status.values()]
-    boat_lons = [o['longitude'] for o in fleet_status.values()]
-    boat_temps = [o['temp_c'] for o in fleet_status.values()]
-
-    # 3. DATA FUSION: Combine Satellite + Boat Points
-    all_lats = [p[0] for p in sat_data] + boat_lats
-    all_lons = [p[1] for p in sat_data] + boat_lons
-    all_temps = [p[2] for p in sat_data] + boat_temps
+    # 1. Combine Baseline + Live Boats
+    base = get_baseline()
+    lats = [p['lat'] for p in base] + [o['latitude'] for o in fleet_status.values()]
+    lons = [p['lon'] for p in base] + [o['longitude'] for o in fleet_status.values()]
+    temps = [p['temp'] for p in base] + [o['temp_c'] for o in fleet_status.values()]
 
     interpolated_points = []
     
-    # Only run math if we have data
-    if len(all_lats) > 5:
+    # 2. RUN THE MATH (The "Real" Interpolation)
+    if len(lats) > 3:
+        # We create a 40x40 grid over the bay
         grid_lat, grid_lon = np.mgrid[-34.15:-33.95:40j, 24.85:25.15:40j]
-        grid_z = griddata((all_lats, all_lons), all_temps, (grid_lat, grid_lon), method='linear')
+        
+        # This fills every pixel based on the nearest data points
+        grid_z = griddata((lats, lons), temps, (grid_lat, grid_lon), method='linear')
 
         for i in range(len(grid_lat)):
             for j in range(len(grid_lon)):
                 val = grid_z[i,j]
                 if not np.isnan(val):
-                    interpolated_points.append([grid_lat[i,j], grid_lon[i,j], val])
+                    interpolated_points.append([grid_lat[i,j], grid_lon[i,j], float(val)])
 
     return f"""
     <!DOCTYPE html>
     <html>
     <head>
-        <title>REEL IQ | Satellite Fusion</title>
+        <title>REEL IQ | Ocean Intel</title>
         <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
         <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
         <style>
-            body {{ background: #0b1622; color: white; font-family: 'Segoe UI', sans-serif; margin: 0; padding: 20px; }}
-            #map {{ height: 80vh; border-radius: 12px; border: 1px solid #333; }}
-            .stats {{ display: flex; gap: 20px; margin-bottom: 10px; }}
+            body {{ background: #0b1622; color: white; font-family: sans-serif; margin: 0; padding: 10px; }}
+            #map {{ height: 90vh; border-radius: 15px; border: 2px solid #1a2a3a; }}
+            .legend {{ position: absolute; bottom: 40px; right: 20px; z-index: 1000; background: rgba(0,0,0,0.8); padding: 10px; border-radius: 5px; }}
         </style>
-        <meta http-equiv="refresh" content="30">
+        <meta http-equiv="refresh" content="10">
     </head>
     <body>
-        <h1>🛰️ REEL IQ <span style="font-weight:100">| Satellite + Vessel Fusion</span></h1>
-        <div class="stats">
-            <div>Nodes: <strong>{len(fleet_status)}</strong></div>
-            <div>Source: <strong>Copernicus L4 NRT SST</strong></div>
-        </div>
+        <h2 style="margin:5px">⚓ REEL IQ <span style="font-weight:100">| Live Spatial Model</span></h2>
         <div id="map"></div>
-
+        <div class="legend">
+            <strong>Surface Temp (°C)</strong><br>
+            <div style="background: linear-gradient(to right, blue, yellow, red); height: 10px; width: 100%;"></div>
+            <small>16°C &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; 23°C</small>
+        </div>
         <script>
             var map = L.map('map').setView([-34.05, 25.02], 11);
             L.tileLayer('https://{{s}}.basemaps.cartocdn.com/dark_all/{{z}}/{{x}}/{{y}}{{r}}.png').addTo(map);
@@ -104,8 +75,8 @@ async def map_dashboard():
             var modelData = {json.dumps(interpolated_points)};
             
             modelData.forEach(p => {{
-                // Dynamic Color Logic
-                var hue = 240 - ((p[2] - 15) * 20); // Blue to Red shift
+                // This creates the professional "pixelated" look
+                var hue = 240 - ((p[2] - 16) * 15); 
                 L.rectangle([[p[0]-0.002, p[1]-0.002], [p[0]+0.002, p[1]+0.002]], {{
                     color: "hsl(" + hue + ", 100%, 50%)", weight: 0, fillOpacity: 0.5
                 }}).addTo(map);
