@@ -2,6 +2,7 @@ import copernicusmarine
 import numpy as np
 import json
 import os
+import xarray as xr
 from datetime import date
 from shapely.geometry import Point, Polygon
 
@@ -23,21 +24,22 @@ def fetch():
     today = date.today().isoformat()
     print(f"Fetching Copernicus SST for {today}...")
 
-    ds = copernicusmarine.open_dataset(
+    copernicusmarine.subset(
         dataset_id="SST_GLO_SST_L4_NRT_OBSERVATIONS_010_001",
-        username=os.environ["COPERNICUS_USERNAME"],
-        password=os.environ["COPERNICUS_PASSWORD"],
+        variables=["analysed_sst"],
         minimum_longitude=24.840,
         maximum_longitude=26.360,
         minimum_latitude=-34.300,
         maximum_latitude=-33.700,
         start_datetime=today,
         end_datetime=today,
-        variables=["analysed_sst"],
+        output_filename="sst_raw.nc",
+        output_directory=".",
+        force_download=True
     )
 
-    sst_data = ds['analysed_sst'].isel(time=0).thin({"latitude": 2, "longitude": 2})
-    sst_data = sst_data.load()
+    ds = xr.open_dataset("sst_raw.nc")
+    sst_data = ds['analysed_sst'].isel(time=0)
     ds.close()
 
     lats = sst_data.latitude.values
@@ -58,7 +60,7 @@ def fetch():
         json.dump(output, f)
 
     print(f"✅ Saved {len(points)} points to satellite_sst.json")
+    os.remove("sst_raw.nc")
 
 if __name__ == "__main__":
     fetch()
-        
