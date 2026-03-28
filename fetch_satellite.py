@@ -60,4 +60,11 @@ def fetch():
     print(f"✅ Saved {len(points)} points to satellite_sst.json")
 
 if __name__ == "__main__":
-    fetch()
+    # Temporarily find correct dataset ID
+    results = copernicusmarine.describe(
+        contains=["SST", "L4", "NRT"],
+        username=os.environ["COPERNICUS_USERNAME"],
+        password=os.environ["COPERNICUS_PASSWORD"]
+    )
+    for r in results.products:
+        print(r.product_id, "-", r.title)
