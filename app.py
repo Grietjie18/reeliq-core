@@ -1,4 +1,4 @@
-import os, uuid
+import os, uuid, json
 from typing import List, Optional
 from datetime import datetime, timedelta, timezone
 from fastapi import FastAPI, HTTPException, Query
@@ -11,7 +11,8 @@ app = FastAPI()
 
 # --- DATABASE CONFIG ---
 DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./test.db")
-if DATABASE_URL.startswith("postgres://"): DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
+if DATABASE_URL and DATABASE_URL.startswith("postgres://"):
+    DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
 database = Database(DATABASE_URL)
 metadata = MetaData()
 observations_table = Table(
@@ -65,7 +66,7 @@ async def get_map():
     html_content = """
     <html>
         <head>
-            <title>REEL IQ | Precision Coastal Thermal</title>
+            <title>REEL IQ | Adaptive Front Detection</title>
             <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
             <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
             <script src="https://leaflet.github.io/Leaflet.heat/dist/leaflet-heat.js"></script>
@@ -75,32 +76,32 @@ async def get_map():
                 #overlay { 
                     position: absolute; top: 20px; left: 20px; z-index: 1000; 
                     background: rgba(0,18,25,0.9); padding: 15px; border-radius: 8px; 
-                    border: 1px solid #00f2ff; color: #00f2ff;
+                    border: 1px solid #00f2ff; color: #00f2ff; min-width: 200px;
                 }
                 #legend {
                     position: absolute; bottom: 30px; right: 20px; z-index: 1000;
                     background: rgba(0,18,25,0.9); padding: 12px; border-radius: 8px; border: 1px solid #333;
                 }
                 .gradient-bar {
-                    height: 180px; width: 15px; 
-                    background: linear-gradient(to top, blue, #00ffff, lime, yellow, orange, red);
+                    height: 200px; width: 15px; 
+                    background: linear-gradient(to top, #0000ff, #00ffff, #00ff00, #ffff00, #ff8000, #ff0000);
                     border-radius: 3px;
                 }
-                /* Soft Glow effect */
-                .leaflet-heatmap-layer { mix-blend-mode: screen; opacity: 0.9; filter: contrast(1.1); }
+                .leaflet-heatmap-layer { mix-blend-mode: screen; opacity: 0.8; filter: contrast(1.2) saturate(1.4); }
             </style>
         </head>
         <body>
             <div id="overlay">
-                <b>REEL IQ | COASTAL MASK</b><br>
-                <small id="status">Clipping to Shoreline...</small>
+                <b>REEL IQ | ADAPTIVE THERMAL</b><br>
+                <small id="range">Detecting Fronts...</small><br>
+                <small id="status" style="font-size: 9px; opacity: 0.7;"></small>
             </div>
             
             <div id="legend">
                 <div style="display:flex; align-items:flex-end;">
                     <div class="gradient-bar"></div>
-                    <div style="margin-left:10px; display:flex; flex-direction:column; justify-content:space-between; height:180px; font-size:11px; color:white; font-weight:bold;">
-                        <span>22°C</span><span>21°C</span><span>20°C</span><span>19°C</span><span>18°C</span><span>17°C</span>
+                    <div id="legend-labels" style="margin-left:10px; display:flex; flex-direction:column; justify-content:space-between; height:200px; font-size:11px; color:white; font-weight:bold;">
+                        <span>MAX</span><span>-</span><span>-</span><span>-</span><span>-</span><span>MIN</span>
                     </div>
                 </div>
             </div>
@@ -108,25 +109,14 @@ async def get_map():
             <div id="map"></div>
             
             <script>
-                var map = L.map('map', { zoomControl: false, attributionControl: false }).setView([-34.14, 25.02], 11);
+                var map = L.map('map', { zoomControl: false, attributionControl: false }).setView([-34.05, 25.10], 11);
                 L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png').addTo(map);
 
-                // COASTAL MASK DATA (Simplified J-Bay Coastline)
-                var jbayCoast = [
-                    [-34.00, 24.80], [-34.02, 24.91], [-34.05, 24.93], 
-                    [-34.13, 24.91], [-34.18, 25.02], [-34.25, 25.20],
-                    [-34.30, 25.50], [-34.50, 25.50], [-34.50, 24.00], [-34.00, 24.00]
-                ];
-
-                // Create a polygon that covers the LAND and 'masks' the heat
-                var landMask = L.polygon(jbayCoast, {color: 'transparent', fillColor: '#06090f', fillOpacity: 1.0}).addTo(map);
-                landMask.bringToFront();
-
                 var heatLayer = L.heatLayer([], {
-                    radius: 35, 
-                    blur: 30, 
-                    max: 0.6,
-                    gradient: { 0.0: 'blue', 0.2: '#00ffff', 0.4: 'lime', 0.6: 'yellow', 0.8: 'orange', 1.0: 'red' }
+                    radius: 45, 
+                    blur: 40, 
+                    max: 0.8,
+                    gradient: { 0.0: '#0000ff', 0.2: '#00ffff', 0.4: '#00ff00', 0.6: '#ffff00', 0.8: '#ff8000', 1.0: '#ff0000' }
                 }).addTo(map);
 
                 async function update() {
@@ -134,29 +124,47 @@ async def get_map():
                         const res = await fetch('/api/live');
                         const data = await res.json();
                         let pts = [];
+                        let allTemps = [];
 
-                        for (const [id, info] of Object.entries(data)) {
-                            let curT = info.temps[info.temps.length-1];
-                            let intensity = (curT - 17) / 5;
-                            intensity = Math.min(Math.max(intensity, 0.01), 1.0);
+                        // 1. Collect all current temps to find the dynamic range
+                        for (const id in data) {
+                            allTemps.push(...data[id].temps);
+                        }
 
-                            info.path.forEach(c => {
-                                for(let i=0; i<15; i++) {
-                                    let rLat = (Math.random()-0.5)*0.18;
-                                    let rLon = (Math.random()-0.5)*0.18;
+                        if (allTemps.length === 0) return;
+
+                        let minT = Math.min(...allTemps);
+                        let maxT = Math.max(...allTemps);
+                        let range = maxT - minT;
+
+                        // 2. Update Overlay & Legend
+                        document.getElementById('range').innerText = `Range: ${minT.toFixed(1)}° - ${maxT.toFixed(1)}°C`;
+                        document.getElementById('status').innerText = `Sensors: ${Object.keys(data).length} | Sensitivity: ${(range/5).toFixed(2)}°/Color`;
+                        
+                        let labels = document.getElementById('legend-labels').children;
+                        labels[0].innerText = maxT.toFixed(1) + "°";
+                        labels[5].innerText = minT.toFixed(1) + "°";
+
+                        // 3. Map intensity based ONLY on the current range
+                        for (const id in data) {
+                            let curT = data[id].temps[data[id].temps.length-1];
+                            
+                            // Normalized intensity: 0.0 at minT, 1.0 at maxT
+                            let intensity = range > 0 ? (curT - minT) / range : 0.5;
+
+                            data[id].path.forEach(c => {
+                                for(let i=0; i<30; i++) { // Dense interpolation
+                                    let rLat = (Math.random()-0.5)*0.3; 
+                                    let rLon = (Math.random()-0.5)*0.3;
                                     pts.push([c[0]+rLat, c[1]+rLon, intensity]);
                                 }
                             });
                         }
                         heatLayer.setLatLngs(pts);
-                        document.getElementById('status').innerText = "Vessels Live: " + Object.keys(data).length;
-                        
-                        // Keep land mask on top to 'hide' heat on land
-                        landMask.bringToFront();
                     } catch (e) { console.error(e); }
                 }
 
-                setInterval(update, 10000); 
+                setInterval(update, 5000); 
                 update();
             </script>
         </body>
