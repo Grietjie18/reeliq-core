@@ -59,8 +59,6 @@ async def ingest_data(vessel_id: str, data: Observation, api_key: str = Query(..
         raise HTTPException(status_code=401)
     
     try:
-        print(f"DEBUG: Ingesting for {vessel_id} at {data.timestamp}")
-        
         query = observations_table.insert().values(
             observation_id=str(data.observation_id), 
             vessel_id=vessel_id,
@@ -83,9 +81,9 @@ async def ingest_data(vessel_id: str, data: Observation, api_key: str = Query(..
 @app.get("/api/live")
 async def get_live_json():
     try:
-        # 130-minute window for SAST/UTC sync + freshness
         now_utc = datetime.now(timezone.utc).replace(tzinfo=None)
-        time_limit = now_utc - timedelta(minutes=130)
+        # Using a wider 24-hour window just to guarantee we see data
+        time_limit = now_utc - timedelta(hours=24)
         
         query = observations_table.select().where(
             observations_table.c.timestamp >= time_limit
@@ -113,7 +111,7 @@ async def get_map():
     html_content = """
     <html>
         <head>
-            <title>REEL IQ | Thermal Ocean Monitor</title>
+            <title>REEL IQ | Live Thermal Sea</title>
             <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
             <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
             <script src="https://leaflet.github.io/Leaflet.heat/dist/leaflet-heat.js"></script>
@@ -125,30 +123,31 @@ async def get_map():
                     background: rgba(0,18,25,0.9); padding: 15px; border-radius: 8px; 
                     border: 1px solid #00f2ff; box-shadow: 0 0 15px rgba(0,242,255,0.2);
                 }
-                .leaflet-heatmap-layer { opacity: 0.85; mix-blend-mode: color-dodge; }
+                /* Use 'screen' or 'lighter' to make overlapping heat points much brighter */
+                .leaflet-heatmap-layer { opacity: 0.95; mix-blend-mode: screen; }
             </style>
         </head>
         <body>
             <div id="overlay">
                 <b>REEL IQ | OCEAN THERMAL</b><br>
-                <small id="status">Syncing Data...</small>
+                <small id="status">Syncing Sensors...</small>
             </div>
             <div id="map"></div>
             <script>
                 var map = L.map('map', { zoomControl: false, attributionControl: false }).setView([-34.14, 25.02], 11);
                 L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png').addTo(map);
 
-                // 🔥 BOOSTED HEATMAP CONFIG
+                // 🔥 ULTRA-BRIGHT HEATMAP CONFIG
                 var heatLayer = L.heatLayer([], {
-                    radius: 95, 
-                    blur: 55, 
-                    max: 0.7,
-                    minOpacity: 0.35,
+                    radius: 110,      // Massive radius to force ocean coverage
+                    blur: 50,         // Crisp but smooth edges
+                    max: 1.0,         
+                    minOpacity: 0.6,  // High floor so we see EVERYTHING
                     gradient: {
                         0.0: 'blue', 
-                        0.3: 'cyan', 
+                        0.2: 'cyan', 
                         0.5: 'lime', 
-                        0.7: 'yellow', 
+                        0.8: 'yellow', 
                         1.0: 'red'
                     }
                 }).addTo(map);
@@ -158,25 +157,32 @@ async def get_map():
                         const response = await fetch('/api/live');
                         const data = await response.json();
                         let points = [];
-                        let vesselCount = Object.keys(data).length;
+                        let sensorCount = Object.keys(data).length;
                         
                         for (const [v_id, info] of Object.entries(data)) {
-                            // Intensity Logic: 15°C to 25°C
-                            let intensity = (info.last.sst - 15) / 10;
-                            intensity = Math.min(Math.max(intensity, 0.2), 1.0);
+                            // Calculate Intensity: Any SST from 10 to 30 degC
+                            // This ensures that even cold winter water (15C) is visible
+                            let intensity = (info.last.sst - 10) / 20; 
+                            intensity = Math.min(Math.max(intensity, 0.4), 1.0);
 
                             info.path.forEach(coord => {
-                                // 🚀 JITTER MULTIPLIER: Adds density to fill ocean gaps
-                                for (let i = 0; i < 5; i++) {
-                                    let latJitter = (Math.random() - 0.5) * 0.01;
-                                    let lonJitter = (Math.random() - 0.5) * 0.01;
-                                    points.push([coord[0] + latJitter, coord[1] + lonJitter, intensity]);
+                                // 10x Jitter Multiplier to turn a single line into a wide thermal break
+                                for (let i = 0; i < 10; i++) {
+                                    let latJ = (Math.random() - 0.5) * 0.02;
+                                    let lonJ = (Math.random() - 0.5) * 0.02;
+                                    points.push([coord[0] + latJ, coord[1] + lonJ, intensity]);
                                 }
                             });
                         }
-                        heatLayer.setLatLngs(points);
-                        document.getElementById('status').innerText = "Live Sensors Syncing: " + vesselCount;
-                    } catch (e) { console.error("Thermal update failed."); }
+                        
+                        if (points.length > 0) {
+                            heatLayer.setLatLngs(points);
+                        }
+                        document.getElementById('status').innerText = "Live Sensors: " + sensorCount;
+                        
+                    } catch (e) { 
+                        console.error("Refresh Error"); 
+                    }
                 }
 
                 setInterval(updateThermalGrid, 10000);
