@@ -24,7 +24,7 @@ jobs:
           COPERNICUS_USERNAME: ${{ secrets.COPERNICUS_USERNAME }}
           COPERNICUS_PASSWORD: ${{ secrets.COPERNICUS_PASSWORD }}
         run: |
-          copernicusmarine login --username "$COPERNICUS_USERNAME" --password "$COPERNICUS_PASSWORD" --overwrite-configuration-file
+          copernicusmarine login --username "$COPERNICUS_USERNAME" --password "$COPERNICUS_PASSWORD" --overwrite
 
       - name: Fetch SST data
         env:
