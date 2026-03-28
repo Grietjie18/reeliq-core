@@ -588,13 +588,13 @@ L.CanvasHeatOverlay = L.Layer.extend({
         this._canvas = document.createElement('canvas');
         this._canvas.style.cssText = 'position:absolute;top:0;left:0;pointer-events:none;';
         map.getPanes().overlayPane.appendChild(this._canvas);
-        map.on('moveend zoomend resize', this._redraw, this);
+        map.on('move zoom resize', this._redraw, this);
         this._redraw();
     },
 
     onRemove(map) {
         map.getPanes().overlayPane.removeChild(this._canvas);
-        map.off('moveend zoomend resize', this._redraw, this);
+        map.off('move zoom resize', this._redraw, this);
     },
 
     _redraw() {
