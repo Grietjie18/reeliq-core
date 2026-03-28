@@ -2,6 +2,6 @@ fastapi
 uvicorn
 numpy
 scipy
-databases[postgresql]==0.9.0
+databases[postgresql]
 sqlalchemy==2.0.28
-asyncpg==0.29.0
+psycopg2-binary
