@@ -1,114 +1,106 @@
-import uvicorn
-import json
 import os
+import uuid
+from typing import List, Optional
 from datetime import datetime
-from fastapi import FastAPI
-from fastapi.responses import HTMLResponse
-from schema import Observation
+from fastapi import FastAPI, HTTPException
+from pydantic import BaseModel, Field
+from databases import Database
+from sqlalchemy import create_engine, MetaData, Table, Column, Float, String, DateTime, Integer
 
-app = FastAPI()
-# We keep this global so it persists as long as the server is awake
-fleet_status = {}
-recent_logs = []
+# --- 1. DATA SCHEMA (CF-CONVENTION ALIGNED) ---
+class Observation(BaseModel):
+    observation_id: uuid.UUID = Field(default_factory=uuid.uuid4)
+    timestamp: datetime = Field(default_factory=datetime.utcnow)
+    latitude: float = Field(..., ge=-90, le=90)
+    longitude: float = Field(..., ge=-180, le=180)
+    
+    # Core Variables
+    sea_surface_temperature: float 
+    sea_surface_salinity: Optional[float] = None
+    sea_surface_turbidity: Optional[float] = None
+    
+    # Propulsion Data
+    speed_over_ground: float
+    speed_through_water: float
+    
+    # Quality Control
+    qc_flag: int = 0
+
+# --- 2. DATABASE CONFIGURATION ---
+DATABASE_URL = os.getenv("DATABASE_URL")
+
+# If testing locally without a DB, this handles the error gracefully
+if not DATABASE_URL:
+    DATABASE_URL = "sqlite:///./test.db"  # Fallback to local file for safety
+
+database = Database(DATABASE_URL)
+metadata = MetaData()
+
+observations_table = Table(
+    "observations",
+    metadata,
+    Column("observation_id", String, primary_key=True),
+    Column("vessel_id", String, index=True),
+    Column("timestamp", DateTime),
+    Column("latitude", Float),
+    Column("longitude", Float),
+    Column("sea_surface_temperature", Float),
+    Column("sea_surface_salinity", Float, nullable=True),
+    Column("sea_surface_turbidity", Float, nullable=True),
+    Column("speed_over_ground", Float),
+    Column("speed_through_water", Float),
+    Column("qc_flag", Integer, default=0)
+)
+
+# --- 3. APP INITIALIZATION ---
+app = FastAPI(title="REEL IQ Core API")
+
+@app.on_event("startup")
+async def startup():
+    await database.connect()
+    # This creates the physical table in Postgres if it doesn't exist
+    engine = create_engine(DATABASE_URL)
+    metadata.create_all(engine)
+
+@app.on_event("shutdown")
+async def shutdown():
+    await database.disconnect()
+
+# --- 4. ENDPOINTS ---
+
+@app.get("/")
+async def root():
+    return {"message": "REEL IQ Core Online", "database": "Connected"}
 
 @app.post("/ingest/{vessel_id}")
-async def ingest_data(vessel_id: str, obs: Observation):
-    global fleet_status, recent_logs
-    data = obs.model_dump()
-    fleet_status[vessel_id] = data
-    
-    log_entry = {
-        "id": vessel_id, 
-        "time": datetime.now().strftime("%H:%M:%S"),
-        "temp": data['temp_c']
-    }
-    recent_logs.insert(0, log_entry)
-    if len(recent_logs) > 8: recent_logs.pop()
-    return {"status": "success"}
+async def ingest_data(vessel_id: str, data: Observation):
+    try:
+        query = observations_table.insert().values(
+            observation_id=str(data.observation_id),
+            vessel_id=vessel_id,
+            timestamp=data.timestamp,
+            latitude=data.latitude,
+            longitude=data.longitude,
+            sea_surface_temperature=data.sea_surface_temperature,
+            sea_surface_salinity=data.sea_surface_salinity,
+            sea_surface_turbidity=data.sea_surface_turbidity,
+            speed_over_ground=data.speed_over_ground,
+            speed_through_water=data.speed_through_water,
+            qc_flag=data.qc_flag
+        )
+        await database.execute(query)
+        return {"status": "success", "vessel": vessel_id}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
-# NEW: This "Endpoint" only sends the raw data, not the whole HTML page
 @app.get("/data")
-async def get_data():
-    vessels = [{"id": k, **v} for k, v in fleet_status.items()]
-    return {"vessels": vessels, "logs": recent_logs}
+async def get_all_data(limit: int = 100):
+    """Returns the last 100 pings from the database for the map."""
+    query = observations_table.select().order_by(observations_table.c.timestamp.desc()).limit(limit)
+    return await database.fetch_all(query)
 
-@app.get("/", response_class=HTMLResponse)
-async def map_dashboard():
-    return f"""
-    <!DOCTYPE html>
-    <html>
-    <head>
-        <title>REEL IQ | Live Analytics</title>
-        <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
-        <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-        <style>
-            body {{ background: #06090f; color: #e6edf3; margin: 0; font-family: sans-serif; overflow: hidden; }}
-            #map {{ height: 100vh; width: 100vw; position: absolute; z-index: 1; }}
-            .sidebar {{ 
-                position: absolute; top: 20px; left: 20px; width: 280px; z-index: 1000;
-                background: rgba(13, 17, 23, 0.85); backdrop-filter: blur(10px);
-                border: 1px solid #30363d; border-radius: 12px; padding: 15px;
-            }}
-            .log-item {{ font-size: 11px; padding: 5px 0; border-bottom: 1px solid #21262d; color: #8b949e; }}
-            .status-pulse {{
-                display: inline-block; width: 8px; height: 8px; background: #238636;
-                border-radius: 50%; margin-right: 8px; animation: pulse 2s infinite;
-            }}
-            @keyframes pulse {{ 0% {{ opacity: 1; }} 50% {{ opacity: 0.3; }} 100% {{ opacity: 1; }} }}
-        </style>
-    </head>
-    <body>
-        <div class="sidebar">
-            <h3 style="margin:0;"><span class="status-pulse"></span> REEL IQ LIVE</h3>
-            <div id="stats" style="margin: 10px 0; font-size: 13px;">Detecting Fleet...</div>
-            <div style="font-size: 11px; font-weight: bold; color: #58a6ff;">RECENT PINGS</div>
-            <div id="log-container"></div>
-        </div>
-        <div id="map"></div>
-
-        <script>
-            var map = L.map('map', {{ zoomControl: false }}).setView([-34.05, 25.02], 12);
-            L.tileLayer('https://{{s}}.basemaps.cartocdn.com/dark_all/{{z}}/{{x}}/{{y}}{{r}}.png').addTo(map);
-            
-            var vesselLayer = L.layerGroup().addTo(map);
-
-            async function updateDashboard() {{
-                try {{
-                    const response = await fetch('/data');
-                    const data = await response.json();
-                    
-                    // 1. Update Stats
-                    document.getElementById('stats').innerHTML = `Fleet Size: <b>${{data.vessels.length}}</b>`;
-                    
-                    // 2. Update Logs
-                    let logHtml = "";
-                    data.logs.forEach(l => {{
-                        logHtml += `<div class="log-item">[${{l.time}}] <b>${{l.id}}</b>: ${{l.temp}}°C</div>`;
-                    }});
-                    document.getElementById('log-container').innerHTML = logHtml;
-
-                    // 3. Update Map Markers WITHOUT refreshing the whole page
-                    vesselLayer.clearLayers();
-                    data.vessels.forEach(v => {{
-                        var hue = 240 - ((v.temp_c - 16) * 34);
-                        if (hue < 0) hue = 0; if (hue > 240) hue = 240;
-
-                        L.circleMarker([v.latitude, v.longitude], {{
-                            radius: 7, fillColor: "hsl(" + hue + ", 100%, 50%)",
-                            color: "#fff", weight: 1, fillOpacity: 0.8
-                        }}).addTo(vesselLayer).bindTooltip(v.id + ": " + v.temp_c + "°C");
-                    }});
-                }} catch (e) {{ console.log("Waiting for data..."); }}
-            }}
-
-            // Run update every 3 seconds - NO WHITE FLASH!
-            setInterval(updateDashboard, 3000);
-            updateDashboard();
-        </script>
-    </body>
-    </html>
-    """
-
-if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 8000))
-    uvicorn.run(app, host="0.0.0.0", port=port)
+@app.get("/vessel/{vessel_id}")
+async def get_vessel_history(vessel_id: str):
+    """Returns the history for a specific boat."""
+    query = observations_table.select().where(observations_table.c.vessel_id == vessel_id)
+    return await database.fetch_all(query)
