@@ -1,13 +1,8 @@
-import os, uuid
+import os, uuid, json
 import numpy as np
-import copernicusmarine
-import xarray as xr
-import numpy as np
-from datetime import date
-from functools import lru_cache
 from scipy.interpolate import RBFInterpolator
 from shapely.geometry import Point, Polygon
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta, timezone, date
 from fastapi import FastAPI, Query, HTTPException
 from fastapi.responses import HTMLResponse, JSONResponse
 from pydantic import BaseModel, Field
@@ -36,7 +31,6 @@ observations_table = Table(
 )
 
 # --- AUTH ---
-# vessel_id -> (username, password)
 VESSEL_CREDENTIALS = {
     "RV_Algoa_0":  ("skipper01", "reef2026"),
     "RV_Algoa_1":  ("skipper02", "reef2026"),
@@ -46,36 +40,32 @@ VESSEL_CREDENTIALS = {
 VALID_API_KEYS = {"2026_Reeliq_dev18"}
 
 # --- ALGOA BAY OCEAN POLYGON ---
-# Tightly traced to exclude PE harbour, coastline and land
-# (lon, lat) pairs — shapely uses (x, y) = (lon, lat)
 ALGOA_BAY_POLYGON = Polygon([
-    # Offshore SW boundary
-    (24.869, -34.300),  # Offshore south of Shark Point
-    # Coastline traced west to east (lon, lat)
-    (24.869, -34.195),  # Shark Point / St Francis
-    (24.841, -34.145),  # Kromriver mouth
-    (24.912, -34.085),  # Ashton Bay
-    (24.921, -34.079),  # Marina Martinique
-    (24.925, -34.052),  # Main Beach JBay
-    (24.933, -34.032),  # Supertubes
-    (24.931, -34.011),  # Kabeljous Beach
-    (24.937, -34.005),  # Kabeljous Estuary
-    (25.034, -33.970),  # Gamtoos River Mouth
-    (25.213, -33.969),  # Van Stadens River Mouth
-    (25.402, -34.034),  # Kini Bay
-    (25.584, -34.048),  # Schoenmakerskop
-    (25.700, -34.029),  # Cape Recife
-    (25.644, -33.955),  # PE Harbour Mouth
-    (25.632, -33.865),  # Swartkops Estuary
-    (25.694, -33.815),  # Coega Harbour
-    (25.830, -33.727),  # East of PE
-    (26.080, -33.707),  # Further east
-    (26.298, -33.763),  # Eastern bay
-    (26.352, -33.760),  # Eastern edge
-    # Offshore return boundary
-    (26.352, -34.300),  # Offshore SE corner
-    (24.869, -34.300),  # Close polygon
+    (24.869, -34.300),
+    (24.869, -34.195),
+    (24.841, -34.145),
+    (24.912, -34.085),
+    (24.921, -34.079),
+    (24.925, -34.052),
+    (24.933, -34.032),
+    (24.931, -34.011),
+    (24.937, -34.005),
+    (25.034, -33.970),
+    (25.213, -33.969),
+    (25.402, -34.034),
+    (25.584, -34.048),
+    (25.700, -34.029),
+    (25.644, -33.955),
+    (25.632, -33.865),
+    (25.694, -33.815),
+    (25.830, -33.727),
+    (26.080, -33.707),
+    (26.298, -33.763),
+    (26.352, -33.760),
+    (26.352, -34.300),
+    (24.869, -34.300),
 ])
+
 def is_ocean(lon, lat):
     return ALGOA_BAY_POLYGON.contains(Point(lon, lat))
 
@@ -88,82 +78,25 @@ class Observation(BaseModel):
     sea_surface_temperature: float
     speed_over_ground: float
     speed_through_water: float
-# --- COPERNICUS SST FETCH ---
-# Cached daily — only re-fetches when date changes
+
+# --- SATELLITE SST CACHE ---
 _copernicus_cache = {"date": None, "points": []}
 
 async def get_satellite_sst():
     today = date.today().isoformat()
     if _copernicus_cache["date"] == today and _copernicus_cache["points"]:
         return _copernicus_cache["points"]
-
     try:
-        username = os.getenv("COPERNICUS_USERNAME")
-        password = os.getenv("COPERNICUS_PASSWORD")
-
-        ds = copernicusmarine.open_dataset(
-            dataset_id="SST_GLO_SST_L4_NRT_OBSERVATIONS_010_001",
-            username=username,
-            password=password,
-            minimum_longitude=24.840,
-            maximum_longitude=26.360,
-            minimum_latitude=-34.300,
-            maximum_latitude=-33.700,
-            start_datetime=today,
-            end_datetime=today,
-            variables=["analysed_sst"],
-            chunk_size_limit=50  # Strict memory limit
-        )
-
-        # Take only latest time step and subsample every 2nd point
-        sst_data = ds['analysed_sst'].isel(time=0).thin({"latitude": 2, "longitude": 2})
-        sst_data = sst_data.load()  # Load only this small subset into memory
-        ds.close()
-
-        lats = sst_data.latitude.values
-        lons = sst_data.longitude.values
-
-        points = []
-        for i, lat in enumerate(lats):
-            for j, lon in enumerate(lons):
-                val = float(sst_data.values[i, j])
-                if np.isnan(val):
-                    continue
-                temp_c = val - 273.15
-                if is_ocean(float(lon), float(lat)):
-                    points.append((float(lat), float(lon), temp_c))
-
+        with open("satellite_sst.json", "r") as f:
+            data = json.load(f)
+        points = [(p[0], p[1], p[2]) for p in data["points"]]
         _copernicus_cache["date"] = today
         _copernicus_cache["points"] = points
-        print(f"✅ Copernicus SST: {len(points)} points loaded")
+        print(f"✅ Satellite SST loaded: {len(points)} points from {data['date']}")
         return points
-
     except Exception as e:
-        print(f"⚠️ Copernicus fetch failed: {e}")
+        print(f"⚠️ Could not load satellite_sst.json: {e}")
         return []
-        # Extract SST values — convert from Kelvin to Celsius
-        sst_data = ds['analysed_sst'].isel(time=0)
-        lats = sst_data.latitude.values
-        lons = sst_data.longitude.values
-        
-        points = []
-        for i, lat in enumerate(lats):
-            for j, lon in enumerate(lons):
-                val = float(sst_data.values[i, j])
-                if np.isnan(val):
-                    continue
-                temp_c = val - 273.15  # Kelvin to Celsius
-                if is_ocean(lon, lat):
-                    points.append((float(lat), float(lon), temp_c))
-        
-        _copernicus_cache["date"] = today
-        _copernicus_cache["points"] = points
-        print(f"✅ Copernicus SST fetched: {len(points)} points")
-        return points
-
-    except Exception as e:
-        print(f"⚠️ Copernicus fetch failed: {e}")
-        return []    
 
 @app.on_event("startup")
 async def startup():
@@ -204,22 +137,17 @@ async def get_interpolated():
     )
     rows = await database.fetch_all(query)
 
-    # --- SATELLITE BASELINE ---
     satellite_points = await get_satellite_sst()
 
-    # --- COMBINE SATELLITE + VESSEL DATA ---
     all_lats = []
     all_lons = []
     all_temps = []
 
-    # Satellite points — base weight 1.0
     for lat, lon, temp in satellite_points:
         all_lats.append(lat)
         all_lons.append(lon)
         all_temps.append(temp)
 
-    # Vessel observations — higher weight, repeat 5x to dominate locally
-    # This means real vessel data overrides satellite where vessels have been
     for r in rows:
         for _ in range(5):
             all_lats.append(r['latitude'])
@@ -232,7 +160,6 @@ async def get_interpolated():
     obs_coords = np.column_stack([all_lats, all_lons])
     obs_temps = np.array(all_temps)
 
-    # Grid across full Algoa Bay
     grid_lats = np.linspace(-34.300, -33.700, 80)
     grid_lons = np.linspace(24.840, 26.360, 80)
 
@@ -266,11 +193,11 @@ async def get_vessel(vessel_id: str):
     row = await database.fetch_one(query)
     if not row:
         raise HTTPException(status_code=404, detail="No recent data for vessel")
-    
+
     sog = row['speed_over_ground']
     stw = row['speed_through_water']
-    diff = stw - sog  # positive = fighting current, negative = riding it
-    
+    diff = stw - sog
+
     if diff > 0.5:
         efficiency = "poor"
         efficiency_label = "Fighting Current 🔴"
@@ -326,8 +253,6 @@ async def get_map():
             overflow: hidden;
             height: 100vh;
         }
-
-        /* ---- LOGIN SCREEN ---- */
         #login-screen {
             position: fixed; inset: 0; z-index: 9999;
             background: var(--bg);
@@ -363,9 +288,7 @@ async def get_map():
             margin-bottom: 40px;
             text-transform: uppercase;
         }
-        .login-field {
-            margin-bottom: 16px;
-        }
+        .login-field { margin-bottom: 16px; }
         .login-field label {
             display: block;
             font-size: 0.65rem;
@@ -425,12 +348,8 @@ async def get_map():
             text-align: center;
             letter-spacing: 0.1em;
         }
-
-        /* ---- MAP SCREEN ---- */
         #app-screen { display: none; height: 100vh; flex-direction: column; }
         #map { flex: 1; background: var(--bg); }
-
-        /* Top bar */
         #topbar {
             position: absolute; top: 0; left: 0; right: 0;
             z-index: 1000;
@@ -465,8 +384,6 @@ async def get_map():
             0%, 100% { opacity: 1; }
             50% { opacity: 0.3; }
         }
-
-        /* Legend */
         #legend {
             position: absolute; top: 60px; right: 16px; z-index: 1000;
             background: var(--panel);
@@ -480,7 +397,6 @@ async def get_map():
                 #0000ff 0%, #00ffff 25%, #00ff88 45%,
                 #ffff00 65%, #ff8800 82%, #ff0000 100%);
             border-radius: 2px;
-            margin: 0 auto 0 auto;
         }
         .legend-labels {
             display: flex; flex-direction: column;
@@ -498,8 +414,6 @@ async def get_map():
             text-align: center;
             margin-bottom: 6px;
         }
-
-        /* SST info panel top left */
         #sst-panel {
             position: absolute; top: 60px; left: 16px; z-index: 1000;
             background: var(--panel);
@@ -525,8 +439,6 @@ async def get_map():
             color: rgba(255,255,255,0.3);
             margin-top: 2px;
         }
-
-        /* Bottom efficiency bar */
         #efficiency-bar {
             position: absolute; bottom: 0; left: 0; right: 0; z-index: 1000;
             background: var(--panel);
@@ -545,15 +457,8 @@ async def get_map():
             text-transform: uppercase;
             margin-bottom: 2px;
         }
-        .eff-value {
-            font-size: 0.85rem;
-            font-weight: bold;
-            color: white;
-        }
-        .eff-divider {
-            width: 1px; height: 32px;
-            background: rgba(255,255,255,0.1);
-        }
+        .eff-value { font-size: 0.85rem; font-weight: bold; color: white; }
+        .eff-divider { width: 1px; height: 32px; background: rgba(255,255,255,0.1); }
         #eff-status {
             font-size: 0.75rem;
             font-weight: bold;
@@ -564,8 +469,6 @@ async def get_map():
         #eff-status.good { color: var(--good); }
         #eff-status.poor { color: var(--bad); }
         #eff-status.neutral { color: var(--warn); }
-
-        /* Logout button */
         #logout-btn {
             position: absolute; bottom: 68px; right: 16px; z-index: 1001;
             background: transparent;
@@ -583,7 +486,6 @@ async def get_map():
 </head>
 <body>
 
-<!-- LOGIN SCREEN -->
 <div id="login-screen">
     <div class="login-bg"></div>
     <div class="login-box">
@@ -603,7 +505,6 @@ async def get_map():
     </div>
 </div>
 
-<!-- APP SCREEN -->
 <div id="app-screen">
     <div id="topbar">
         <div class="topbar-logo">REEL IQ</div>
@@ -624,8 +525,8 @@ async def get_map():
         <div class="legend-row">
             <div class="legend-bar"></div>
             <div class="legend-labels">
+                <span>24°</span>
                 <span>22°</span>
-                <span>21°</span>
                 <span>20°</span>
                 <span>19°</span>
                 <span>18°</span>
@@ -654,15 +555,12 @@ async def get_map():
 </div>
 
 <script>
-// --- STATE ---
 let currentVesselId = null;
 let map = null;
 let heatLayer = null;
 let vesselMarker = null;
 
-// --- COLOUR SCALE (temperature → rgba) ---
 function tempToColor(intensity) {
-    // Blue → Cyan → Green → Yellow → Orange → Red
     const stops = [
         [0,   [0,   0,   255]],
         [0.2, [0,   255, 255]],
@@ -684,12 +582,9 @@ function tempToColor(intensity) {
     return [r, g, b];
 }
 
-// --- CANVAS OVERLAY (zoom-independent) ---
-// Renders the interpolated grid as coloured rectangles on a canvas overlay
-// Canvas is redrawn on every map move/zoom — no pixel-bleed artefacts
 L.CanvasHeatOverlay = L.Layer.extend({
     _points: [],
-    _cellSize: 0.021, // degrees — matches grid resolution
+    _cellSize: 0.021,
 
     setPoints(pts) { this._points = pts; this._redraw(); },
 
@@ -708,26 +603,19 @@ L.CanvasHeatOverlay = L.Layer.extend({
     },
 
     _redraw() {
-    if (!this._map || !this._points.length) return;
-    
-    // Lock canvas to screen coordinates during panning
-    const mapPane = this._map.getPanes().mapPane;
-    const transform = mapPane.style.transform;
-    const match = transform.match(/translate3d\((.+)px,\s*(.+)px/);
-    const dx = match ? -parseFloat(match[1]) : 0;
-    const dy = match ? -parseFloat(match[2]) : 0;
-    this._canvas.style.transform = `translate3d(${dx}px, ${dy}px, 0)`;
-
-    const size = this._map.getSize();
-    this._canvas.width  = size.x;
-    this._canvas.height = size.y;
-    const ctx = this._canvas.getContext('2d');
-    ctx.clearRect(0, 0, size.x, size.y);
-    const bounds = this._map.getBounds();
-    const topLeft = this._map.latLngToContainerPoint(bounds.getNorthWest());
-
+        if (!this._map || !this._points.length) return;
+        const mapPane = this._map.getPanes().mapPane;
+        const transform = mapPane.style.transform;
+        const match = transform.match(/translate3d\((.+)px,\s*(.+)px/);
+        const dx = match ? -parseFloat(match[1]) : 0;
+        const dy = match ? -parseFloat(match[2]) : 0;
+        this._canvas.style.transform = `translate3d(${dx}px, ${dy}px, 0)`;
+        const size = this._map.getSize();
+        this._canvas.width  = size.x;
+        this._canvas.height = size.y;
+        const ctx = this._canvas.getContext('2d');
+        ctx.clearRect(0, 0, size.x, size.y);
         for (const [lat, lon, intensity] of this._points) {
-            // Convert grid cell corners to pixels
             const pxNW = this._map.latLngToContainerPoint([lat + this._cellSize/2, lon - this._cellSize/2]);
             const pxSE = this._map.latLngToContainerPoint([lat - this._cellSize/2, lon + this._cellSize/2]);
             const w = Math.ceil(pxSE.x - pxNW.x) + 1;
@@ -739,7 +627,6 @@ L.CanvasHeatOverlay = L.Layer.extend({
     }
 });
 
-// --- LOGIN ---
 async function doLogin() {
     const u = document.getElementById('username').value.trim();
     const p = document.getElementById('password').value.trim();
@@ -769,24 +656,20 @@ function doLogout() {
     document.getElementById('password').value = '';
 }
 
-// --- APP INIT ---
 function showApp() {
     document.getElementById('login-screen').style.display = 'none';
     const appEl = document.getElementById('app-screen');
     appEl.style.display = 'flex';
     appEl.style.position = 'relative';
-
     if (!map) {
         map = L.map('map', { zoomControl: true, attributionControl: false })
                 .setView([-34.0, 25.85], 10);
         L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png').addTo(map);
         heatLayer = new L.CanvasHeatOverlay().addTo(map);
     }
-
     startUpdates();
 }
 
-// --- UPDATE LOOPS ---
 function startUpdates() {
     updateHeatmap();
     updateVessel();
@@ -799,14 +682,11 @@ async function updateHeatmap() {
         const res = await fetch('/api/interpolated');
         const points = await res.json();
         if (!points.length) return;
-
         heatLayer.setPoints(points);
-
-        const MIN_TEMP = 16.0, MAX_TEMP = 22.0;
+        const MIN_TEMP = 16.0, MAX_TEMP = 24.0;
         const temps = points.map(p => p[2] * (MAX_TEMP - MIN_TEMP) + MIN_TEMP);
         const minT = Math.min(...temps).toFixed(1);
         const maxT = Math.max(...temps).toFixed(1);
-
         document.getElementById('sst-range').textContent = `${minT}° — ${maxT}°C`;
         document.getElementById('grid-points').textContent = `${points.length} grid cells`;
         document.getElementById('update-time').textContent =
@@ -820,8 +700,6 @@ async function updateVessel() {
         const res = await fetch(`/api/vessel/${currentVesselId}`);
         if (!res.ok) return;
         const d = await res.json();
-
-        // Update vessel marker
         const pos = [d.latitude, d.longitude];
         if (!vesselMarker) {
             vesselMarker = L.circleMarker(pos, {
@@ -834,15 +712,11 @@ async function updateVessel() {
         } else {
             vesselMarker.setLatLng(pos);
         }
-
-        // Update efficiency bar
         document.getElementById('sog-val').textContent = d.speed_over_ground.toFixed(1) + ' kts';
         document.getElementById('stw-val').textContent = d.speed_through_water.toFixed(1) + ' kts';
-
         const effEl = document.getElementById('eff-status');
         effEl.textContent = d.efficiency_label;
         effEl.className = d.efficiency;
-
     } catch(e) { console.error('Vessel error:', e); }
 }
 </script>
