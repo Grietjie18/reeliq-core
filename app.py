@@ -3,18 +3,19 @@ import uuid
 from typing import List, Optional
 from datetime import datetime
 from fastapi import FastAPI, HTTPException, Query
+from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, Field
 from databases import Database
 from sqlalchemy import create_engine, MetaData, Table, Column, Float, String, DateTime, Integer
 
-# --- 1. DATA SCHEMA (CF-CONVENTION ALIGNED) ---
+# --- 1. DATA SCHEMA ---
 class Observation(BaseModel):
     observation_id: uuid.UUID = Field(default_factory=uuid.uuid4)
     timestamp: datetime = Field(default_factory=datetime.utcnow)
     latitude: float = Field(..., ge=-90, le=90)
     longitude: float = Field(..., ge=-180, le=180)
     
-    # Core Variables
+    # Core Marine Variables
     sea_surface_temperature: float 
     sea_surface_salinity: Optional[float] = None
     sea_surface_turbidity: Optional[float] = None
@@ -28,11 +29,10 @@ class Observation(BaseModel):
 
 # --- 2. DATABASE & AUTH CONFIGURATION ---
 DATABASE_URL = os.getenv("DATABASE_URL")
-# Fix for Render/SQLAlchemy compatibility
 if DATABASE_URL and DATABASE_URL.startswith("postgres://"):
     DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
 
-# Security Key (Defaults to 'jbay-science' for local testing)
+# Security Key (Matches your Render Environment Variable)
 MASTER_API_KEY = os.getenv("MASTER_API_KEY", "jbay-science-2026")
 
 database = Database(DATABASE_URL)
@@ -60,7 +60,6 @@ app = FastAPI(title="REEL IQ Core API")
 @app.on_event("startup")
 async def startup():
     await database.connect()
-    # This creates the physical table in Postgres if it doesn't exist
     engine = create_engine(DATABASE_URL)
     metadata.create_all(engine)
 
@@ -72,15 +71,14 @@ async def shutdown():
 
 @app.get("/")
 async def root():
-    return {"message": "REEL IQ Core Online", "auth": "Active"}
+    return {"message": "REEL IQ Core Online", "status": "Secure"}
 
 @app.post("/ingest/{vessel_id}")
 async def ingest_data(
     vessel_id: str, 
     data: Observation, 
-    api_key: str = Query(...) # This forces the simulator to send a key
+    api_key: str = Query(...)
 ):
-    # 🛑 THE GATEKEEPER CHECK
     if api_key != MASTER_API_KEY:
         raise HTTPException(status_code=401, detail="Invalid API Key")
         
@@ -105,36 +103,36 @@ async def ingest_data(
 
 @app.get("/data")
 async def get_all_data(limit: int = 100):
-    """Returns the last 100 pings from the database for the map."""
     query = observations_table.select().order_by(observations_table.c.timestamp.desc()).limit(limit)
     return await database.fetch_all(query)
-    from fastapi.responses import HTMLResponse
 
 @app.get("/map", response_class=HTMLResponse)
 async def get_map():
-    # This fetches the latest 50 points from your Postgres database
+    # Pull latest 50 points from Postgres
     query = observations_table.select().order_by(observations_table.c.timestamp.desc()).limit(50)
     rows = await database.fetch_all(query)
     
-    # Convert database rows to a format the map understands
+    # Generate map markers
     points = ""
     for row in rows:
         points += f"L.marker([{row['latitude']}, {row['longitude']}]).addTo(map)"
-        points += f".bindPopup('Vessel: {row['vessel_id']}<br>Temp: {row['sea_surface_temperature']}°C');\n"
+        points += f".bindPopup('<b>Vessel:</b> {row['vessel_id']}<br><b>SST:</b> {row['sea_surface_temperature']}°C');\n"
 
-    # This is the "Skin" of your map
     html_content = f"""
     <html>
         <head>
+            <title>REEL IQ Live Map</title>
             <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
             <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-            <style>#map {{ height: 100vh; }}</style>
+            <style>#map {{ height: 100vh; width: 100%; }} body {{ margin: 0; }}</style>
         </head>
         <body>
             <div id="map"></div>
             <script>
                 var map = L.map('map').setView([-34.05, 24.92], 12);
-                L.tileLayer('https://{{s}}.tile.openstreetmap.org/{{z}}/{{x}}/{{y}}.png').addTo(map);
+                L.tileLayer('https://{{s}}.tile.openstreetmap.org/{{z}}/{{x}}/{{y}}.png', {{
+                    attribution: '&copy; OpenStreetMap contributors'
+                }}).addTo(map);
                 {points}
             </script>
         </body>
