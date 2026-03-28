@@ -6,3 +6,4 @@ databases[postgresql]
 sqlalchemy==2.0.28
 psycopg2-binary
 shapely
+copernicusmarine
