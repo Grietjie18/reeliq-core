@@ -2,22 +2,29 @@ name: Daily SST Fetch
 
 on:
   schedule:
-    - cron: '0 4 * * *'  # Runs at 4am UTC daily (6am SA time)
-  workflow_dispatch:  # Allows manual trigger
+    - cron: '0 4 * * *'
+  workflow_dispatch:
 
 jobs:
   fetch:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
 
       - name: Set up Python
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v5
         with:
           python-version: '3.12'
 
       - name: Install dependencies
-        run: pip install copernicusmarine numpy shapely
+        run: pip install copernicusmarine numpy shapely xarray h5py h5netcdf
+
+      - name: Configure Copernicus credentials
+        env:
+          COPERNICUS_USERNAME: ${{ secrets.COPERNICUS_USERNAME }}
+          COPERNICUS_PASSWORD: ${{ secrets.COPERNICUS_PASSWORD }}
+        run: |
+          copernicusmarine login --username "$COPERNICUS_USERNAME" --password "$COPERNICUS_PASSWORD" --overwrite-configuration-file
 
       - name: Fetch SST data
         env:
