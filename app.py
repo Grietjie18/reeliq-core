@@ -7,37 +7,28 @@ from pydantic import BaseModel, Field
 from databases import Database
 from sqlalchemy import create_engine, MetaData, Table, Column, Float, String, DateTime, Integer
 
-# --- 1. DATA SCHEMA & DB ---
-class Observation(BaseModel):
-    observation_id: uuid.UUID = Field(default_factory=uuid.uuid4)
-    timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
-    latitude: float
-    longitude: float
-    sea_surface_temperature: float 
-    speed_over_ground: float
-    speed_through_water: float
+app = FastAPI()
 
-DATABASE_URL = os.getenv("DATABASE_URL")
-if DATABASE_URL and DATABASE_URL.startswith("postgres://"):
-    DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
-
-MASTER_API_KEY = os.getenv("MASTER_API_KEY", "jbay-science-2026")
+# --- DATABASE CONFIG ---
+DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./test.db")
+if DATABASE_URL.startswith("postgres://"): DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
 database = Database(DATABASE_URL)
 metadata = MetaData()
-
 observations_table = Table(
     "observations", metadata,
     Column("observation_id", String, primary_key=True),
     Column("vessel_id", String, index=True),
     Column("timestamp", DateTime),
-    Column("latitude", Float), 
-    Column("longitude", Float),
+    Column("latitude", Float), Column("longitude", Float),
     Column("sea_surface_temperature", Float), 
-    Column("speed_over_ground", Float), 
-    Column("speed_through_water", Float)
+    Column("speed_over_ground", Float), Column("speed_through_water", Float)
 )
 
-app = FastAPI()
+class Observation(BaseModel):
+    observation_id: uuid.UUID = Field(default_factory=uuid.uuid4)
+    timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    latitude: float; longitude: float; sea_surface_temperature: float 
+    speed_over_ground: float; speed_through_water: float
 
 @app.on_event("startup")
 async def startup():
@@ -47,7 +38,6 @@ async def startup():
 
 @app.post("/ingest/{vessel_id}")
 async def ingest_data(vessel_id: str, data: Observation, api_key: str = Query(...)):
-    if api_key != MASTER_API_KEY: raise HTTPException(status_code=401)
     query = observations_table.insert().values(
         observation_id=str(data.observation_id), vessel_id=vessel_id,
         timestamp=data.timestamp.replace(tzinfo=None), latitude=data.latitude, 
@@ -60,10 +50,8 @@ async def ingest_data(vessel_id: str, data: Observation, api_key: str = Query(..
 @app.get("/api/live")
 async def get_live_json():
     now_utc = datetime.now(timezone.utc).replace(tzinfo=None)
-    time_limit = now_utc - timedelta(hours=12)
-    query = observations_table.select().where(observations_table.c.timestamp >= time_limit).order_by(observations_table.c.timestamp.asc())
+    query = observations_table.select().where(observations_table.c.timestamp >= (now_utc - timedelta(hours=6)))
     rows = await database.fetch_all(query)
-    
     vessels = {}
     for r in rows:
         v_id = r['vessel_id']
@@ -77,116 +65,99 @@ async def get_map():
     html_content = """
     <html>
         <head>
-            <title>REEL IQ | Skipper Command</title>
+            <title>REEL IQ | Precision Coastal Thermal</title>
             <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
             <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
             <script src="https://leaflet.github.io/Leaflet.heat/dist/leaflet-heat.js"></script>
             <style>
-                body { margin: 0; background: #06090f; font-family: 'Helvetica', sans-serif; overflow: hidden; }
-                #map { height: 100vh; width: 100%; }
+                body { margin: 0; background: #06090f; font-family: sans-serif; overflow: hidden; }
+                #map { height: 100vh; width: 100%; background: #06090f; }
                 #overlay { 
                     position: absolute; top: 20px; left: 20px; z-index: 1000; 
-                    background: rgba(0,18,25,0.95); padding: 15px; border-radius: 10px; 
-                    border: 1px solid #00f2ff; color: #00f2ff; width: 180px;
+                    background: rgba(0,18,25,0.9); padding: 15px; border-radius: 8px; 
+                    border: 1px solid #00f2ff; color: #00f2ff;
                 }
                 #legend {
                     position: absolute; bottom: 30px; right: 20px; z-index: 1000;
-                    background: rgba(0,18,25,0.9); padding: 12px; border-radius: 8px;
-                    border: 1px solid #333; color: white; font-size: 11px;
+                    background: rgba(0,18,25,0.9); padding: 12px; border-radius: 8px; border: 1px solid #333;
                 }
                 .gradient-bar {
-                    height: 120px; width: 12px; 
-                    background: linear-gradient(to top, #0000ff, #00ffff, #00ff00, #ffff00, #ff0000);
-                    margin-bottom: 5px; border-radius: 2px;
+                    height: 180px; width: 15px; 
+                    background: linear-gradient(to top, blue, #00ffff, lime, yellow, orange, red);
+                    border-radius: 3px;
                 }
-                .trend-marker { font-weight: bold; font-size: 24px; text-shadow: 0 0 4px #000; cursor: help; }
-                .leaflet-heatmap-layer { mix-blend-mode: screen; opacity: 0.8; }
+                /* Soft Glow effect */
+                .leaflet-heatmap-layer { mix-blend-mode: screen; opacity: 0.9; filter: contrast(1.1); }
             </style>
         </head>
         <body>
             <div id="overlay">
-                <b>REEL IQ COMMAND</b><br>
-                <small id="status">Syncing Sensors...</small>
-                <div style="margin-top:8px; font-size: 10px; border-top: 1px solid #333; padding-top:5px;">
-                    <span style="color:#ff4d4d">▲ Warming</span><br>
-                    <span style="color:#4dffff">▼ Cooling</span>
-                </div>
+                <b>REEL IQ | COASTAL MASK</b><br>
+                <small id="status">Clipping to Shoreline...</small>
             </div>
-
+            
             <div id="legend">
-                <div style="display: flex; flex-direction: row; align-items: flex-end;">
+                <div style="display:flex; align-items:flex-end;">
                     <div class="gradient-bar"></div>
-                    <div style="margin-left: 10px; display: flex; flex-direction: column; justify-content: space-between; height: 120px;">
-                        <span>22.0°C</span><span>20.5°C</span><span>19.0°C</span><span>17.5°C</span><span>16.0°C</span>
+                    <div style="margin-left:10px; display:flex; flex-direction:column; justify-content:space-between; height:180px; font-size:11px; color:white; font-weight:bold;">
+                        <span>22°C</span><span>21°C</span><span>20°C</span><span>19°C</span><span>18°C</span><span>17°C</span>
                     </div>
                 </div>
-                <center style="margin-top:8px; font-weight:bold; color:#00f2ff; font-size:10px;">TEMP GRADIENT</center>
             </div>
 
             <div id="map"></div>
-
+            
             <script>
                 var map = L.map('map', { zoomControl: false, attributionControl: false }).setView([-34.14, 25.02], 11);
                 L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png').addTo(map);
 
+                // COASTAL MASK DATA (Simplified J-Bay Coastline)
+                var jbayCoast = [
+                    [-34.00, 24.80], [-34.02, 24.91], [-34.05, 24.93], 
+                    [-34.13, 24.91], [-34.18, 25.02], [-34.25, 25.20],
+                    [-34.30, 25.50], [-34.50, 25.50], [-34.50, 24.00], [-34.00, 24.00]
+                ];
+
+                // Create a polygon that covers the LAND and 'masks' the heat
+                var landMask = L.polygon(jbayCoast, {color: 'transparent', fillColor: '#06090f', fillOpacity: 1.0}).addTo(map);
+                landMask.bringToFront();
+
                 var heatLayer = L.heatLayer([], {
-                    radius: 35,
-                    blur: 35,
+                    radius: 35, 
+                    blur: 30, 
                     max: 0.6,
-                    minOpacity: 0.2,
-                    gradient: { 0.0: 'blue', 0.25: 'cyan', 0.5: 'lime', 0.75: 'yellow', 1.0: 'red' }
+                    gradient: { 0.0: 'blue', 0.2: '#00ffff', 0.4: 'lime', 0.6: 'yellow', 0.8: 'orange', 1.0: 'red' }
                 }).addTo(map);
 
-                var trendGroup = L.layerGroup().addTo(map);
-
-                async function updateMap() {
+                async function update() {
                     try {
-                        const response = await fetch('/api/live');
-                        const data = await response.json();
-                        let points = [];
-                        trendGroup.clearLayers();
-                        
-                        for (const [v_id, info] of Object.entries(data)) {
-                            let lastT = info.temps[info.temps.length - 1];
-                            // Compare current temp to roughly 1 hour ago (or first ping)
-                            let prevT = info.temps.length > 6 ? info.temps[info.temps.length - 6] : info.temps[0];
-                            let lastLoc = info.path[info.path.length - 1];
+                        const res = await fetch('/api/live');
+                        const data = await res.json();
+                        let pts = [];
 
-                            // Map 0.5 degree steps: 16C to 22C
-                            let intensity = (lastT - 16) / 6; 
-                            intensity = Math.min(Math.max(intensity, 0.05), 1.0);
+                        for (const [id, info] of Object.entries(data)) {
+                            let curT = info.temps[info.temps.length-1];
+                            let intensity = (curT - 17) / 5;
+                            intensity = Math.min(Math.max(intensity, 0.01), 1.0);
 
-                            info.path.forEach(coord => {
-                                for (let i = 0; i < 5; i++) {
-                                    let latJ = (Math.random() - 0.5) * 0.05; 
-                                    let lonJ = (Math.random() - 0.5) * 0.05;
-                                    points.push([coord[0] + latJ, coord[1] + lonJ, intensity]);
+                            info.path.forEach(c => {
+                                for(let i=0; i<15; i++) {
+                                    let rLat = (Math.random()-0.5)*0.18;
+                                    let rLon = (Math.random()-0.5)*0.18;
+                                    pts.push([c[0]+rLat, c[1]+rLon, intensity]);
                                 }
                             });
-
-                            // Trend Arrows logic
-                            let arrow = "";
-                            let diff = (lastT - prevT).toFixed(2);
-                            if (lastT > prevT + 0.1) {
-                                arrow = `<span class='trend-marker' style='color:#ff4d4d' title='Warming: +${diff}°C'>▲</span>`;
-                            } else if (lastT < prevT - 0.1) {
-                                arrow = `<span class='trend-marker' style='color:#4dffff' title='Cooling: ${diff}°C'>▼</span>`;
-                            }
-                            
-                            if (arrow) {
-                                L.marker(lastLoc, {
-                                    icon: L.divIcon({ html: arrow, className: 'trend-icon', iconSize: [25, 25] })
-                                }).addTo(trendGroup);
-                            }
                         }
+                        heatLayer.setLatLngs(pts);
+                        document.getElementById('status').innerText = "Vessels Live: " + Object.keys(data).length;
                         
-                        heatLayer.setLatLngs(points);
-                        document.getElementById('status').innerText = "Live Sensors: " + Object.keys(data).length;
-                    } catch (e) { console.error("Sync Error", e); }
+                        // Keep land mask on top to 'hide' heat on land
+                        landMask.bringToFront();
+                    } catch (e) { console.error(e); }
                 }
 
-                setInterval(updateMap, 10000);
-                updateMap();
+                setInterval(update, 10000); 
+                update();
             </script>
         </body>
     </html>
