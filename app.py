@@ -2,7 +2,7 @@ import os
 import uuid
 from typing import List, Optional
 from datetime import datetime
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Query
 from pydantic import BaseModel, Field
 from databases import Database
 from sqlalchemy import create_engine, MetaData, Table, Column, Float, String, DateTime, Integer
@@ -26,12 +26,14 @@ class Observation(BaseModel):
     # Quality Control
     qc_flag: int = 0
 
-# --- 2. DATABASE CONFIGURATION ---
+# --- 2. DATABASE & AUTH CONFIGURATION ---
 DATABASE_URL = os.getenv("DATABASE_URL")
-
-# If testing locally without a DB, this handles the error gracefully
+# Fix for Render/SQLAlchemy compatibility
 if DATABASE_URL and DATABASE_URL.startswith("postgres://"):
     DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
+
+# Security Key (Defaults to 'jbay-science' for local testing)
+MASTER_API_KEY = os.getenv("MASTER_API_KEY", "jbay-science-2026")
 
 database = Database(DATABASE_URL)
 metadata = MetaData()
@@ -70,10 +72,18 @@ async def shutdown():
 
 @app.get("/")
 async def root():
-    return {"message": "REEL IQ Core Online", "database": "Connected"}
+    return {"message": "REEL IQ Core Online", "auth": "Active"}
 
 @app.post("/ingest/{vessel_id}")
-async def ingest_data(vessel_id: str, data: Observation):
+async def ingest_data(
+    vessel_id: str, 
+    data: Observation, 
+    api_key: str = Query(...) # This forces the simulator to send a key
+):
+    # 🛑 THE GATEKEEPER CHECK
+    if api_key != MASTER_API_KEY:
+        raise HTTPException(status_code=401, detail="Invalid API Key")
+        
     try:
         query = observations_table.insert().values(
             observation_id=str(data.observation_id),
@@ -97,10 +107,4 @@ async def ingest_data(vessel_id: str, data: Observation):
 async def get_all_data(limit: int = 100):
     """Returns the last 100 pings from the database for the map."""
     query = observations_table.select().order_by(observations_table.c.timestamp.desc()).limit(limit)
-    return await database.fetch_all(query)
-
-@app.get("/vessel/{vessel_id}")
-async def get_vessel_history(vessel_id: str):
-    """Returns the history for a specific boat."""
-    query = observations_table.select().where(observations_table.c.vessel_id == vessel_id)
     return await database.fetch_all(query)
