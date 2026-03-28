@@ -96,13 +96,11 @@ async def get_satellite_sst():
     today = date.today().isoformat()
     if _copernicus_cache["date"] == today and _copernicus_cache["points"]:
         return _copernicus_cache["points"]
-    
+
     try:
         username = os.getenv("COPERNICUS_USERNAME")
         password = os.getenv("COPERNICUS_PASSWORD")
 
-        # SST product — Mediterranean/Global L4 analysis
-        # OSTIA global product, daily, 0.05 degree resolution
         ds = copernicusmarine.open_dataset(
             dataset_id="SST_GLO_SST_L4_NRT_OBSERVATIONS_010_001",
             username=username,
@@ -113,9 +111,36 @@ async def get_satellite_sst():
             maximum_latitude=-33.700,
             start_datetime=today,
             end_datetime=today,
-            variables=["analysed_sst"]
+            variables=["analysed_sst"],
+            chunk_size_limit=50  # Strict memory limit
         )
 
+        # Take only latest time step and subsample every 2nd point
+        sst_data = ds['analysed_sst'].isel(time=0).thin({"latitude": 2, "longitude": 2})
+        sst_data = sst_data.load()  # Load only this small subset into memory
+        ds.close()
+
+        lats = sst_data.latitude.values
+        lons = sst_data.longitude.values
+
+        points = []
+        for i, lat in enumerate(lats):
+            for j, lon in enumerate(lons):
+                val = float(sst_data.values[i, j])
+                if np.isnan(val):
+                    continue
+                temp_c = val - 273.15
+                if is_ocean(float(lon), float(lat)):
+                    points.append((float(lat), float(lon), temp_c))
+
+        _copernicus_cache["date"] = today
+        _copernicus_cache["points"] = points
+        print(f"✅ Copernicus SST: {len(points)} points loaded")
+        return points
+
+    except Exception as e:
+        print(f"⚠️ Copernicus fetch failed: {e}")
+        return []
         # Extract SST values — convert from Kelvin to Celsius
         sst_data = ds['analysed_sst'].isel(time=0)
         lats = sst_data.latitude.values
