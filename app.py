@@ -10,7 +10,6 @@ from sqlalchemy import create_engine, MetaData, Table, Column, Float, String, Da
 # --- 1. DATA SCHEMA & DB ---
 class Observation(BaseModel):
     observation_id: uuid.UUID = Field(default_factory=uuid.uuid4)
-    # Using timezone.utc ensures the simulator and server speak the same "time language"
     timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     latitude: float
     longitude: float
@@ -60,13 +59,12 @@ async def ingest_data(vessel_id: str, data: Observation, api_key: str = Query(..
         raise HTTPException(status_code=401)
     
     try:
-        # This log helps you see exactly what arrives in your Render logs
         print(f"DEBUG: Ingesting for {vessel_id} at {data.timestamp}")
         
         query = observations_table.insert().values(
             observation_id=str(data.observation_id), 
             vessel_id=vessel_id,
-            timestamp=data.timestamp.replace(tzinfo=None), # Strip TZ for Postgres 'DateTime' column
+            timestamp=data.timestamp.replace(tzinfo=None), 
             latitude=data.latitude, 
             longitude=data.longitude,
             sea_surface_temperature=data.sea_surface_temperature, 
@@ -85,9 +83,9 @@ async def ingest_data(vessel_id: str, data: Observation, api_key: str = Query(..
 @app.get("/api/live")
 async def get_live_json():
     try:
-        # Using a 24-hour window temporarily just to find your "missing" boats
+        # 130-minute window for SAST/UTC sync + freshness
         now_utc = datetime.now(timezone.utc).replace(tzinfo=None)
-        time_limit = now_utc - timedelta(hours=24)
+        time_limit = now_utc - timedelta(minutes=130)
         
         query = observations_table.select().where(
             observations_table.c.timestamp >= time_limit
@@ -115,7 +113,7 @@ async def get_map():
     html_content = """
     <html>
         <head>
-            <title>REEL IQ | Ocean Thermal</title>
+            <title>REEL IQ | Thermal Ocean Monitor</title>
             <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
             <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
             <script src="https://leaflet.github.io/Leaflet.heat/dist/leaflet-heat.js"></script>
@@ -125,8 +123,9 @@ async def get_map():
                 #overlay { 
                     position: absolute; top: 20px; left: 20px; z-index: 1000; 
                     background: rgba(0,18,25,0.9); padding: 15px; border-radius: 8px; 
-                    border: 1px solid #00f2ff;
+                    border: 1px solid #00f2ff; box-shadow: 0 0 15px rgba(0,242,255,0.2);
                 }
+                .leaflet-heatmap-layer { opacity: 0.85; mix-blend-mode: color-dodge; }
             </style>
         </head>
         <body>
@@ -139,31 +138,49 @@ async def get_map():
                 var map = L.map('map', { zoomControl: false, attributionControl: false }).setView([-34.14, 25.02], 11);
                 L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png').addTo(map);
 
+                // 🔥 BOOSTED HEATMAP CONFIG
                 var heatLayer = L.heatLayer([], {
-                    radius: 80, blur: 50, max: 1.0,
-                    gradient: {0.0: 'blue', 0.4: 'cyan', 0.6: 'lime', 0.8: 'yellow', 1.0: 'red'}
+                    radius: 95, 
+                    blur: 55, 
+                    max: 0.7,
+                    minOpacity: 0.35,
+                    gradient: {
+                        0.0: 'blue', 
+                        0.3: 'cyan', 
+                        0.5: 'lime', 
+                        0.7: 'yellow', 
+                        1.0: 'red'
+                    }
                 }).addTo(map);
 
-                async function updateOceanHeat() {
+                async function updateThermalGrid() {
                     try {
                         const response = await fetch('/api/live');
                         const data = await response.json();
                         let points = [];
-                        let count = Object.keys(data).length;
+                        let vesselCount = Object.keys(data).length;
                         
                         for (const [v_id, info] of Object.entries(data)) {
+                            // Intensity Logic: 15°C to 25°C
                             let intensity = (info.last.sst - 15) / 10;
-                            intensity = Math.min(Math.max(intensity, 0.1), 1.0);
+                            intensity = Math.min(Math.max(intensity, 0.2), 1.0);
+
                             info.path.forEach(coord => {
-                                points.push([coord[0], coord[1], intensity]);
+                                // 🚀 JITTER MULTIPLIER: Adds density to fill ocean gaps
+                                for (let i = 0; i < 5; i++) {
+                                    let latJitter = (Math.random() - 0.5) * 0.01;
+                                    let lonJitter = (Math.random() - 0.5) * 0.01;
+                                    points.push([coord[0] + latJitter, coord[1] + lonJitter, intensity]);
+                                }
                             });
                         }
                         heatLayer.setLatLngs(points);
-                        document.getElementById('status').innerText = "Vessels Found: " + count;
-                    } catch (e) { console.error("Sync Error"); }
+                        document.getElementById('status').innerText = "Live Sensors Syncing: " + vesselCount;
+                    } catch (e) { console.error("Thermal update failed."); }
                 }
-                setInterval(updateOceanHeat, 10000);
-                updateOceanHeat();
+
+                setInterval(updateThermalGrid, 10000);
+                updateThermalGrid();
             </script>
         </body>
     </html>
