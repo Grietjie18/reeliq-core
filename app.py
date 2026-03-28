@@ -149,7 +149,7 @@ async def get_interpolated():
         all_temps.append(temp)
 
     for r in rows:
-        for _ in range(5):
+        for _ in range(3):
             all_lats.append(r['latitude'])
             all_lons.append(r['longitude'])
             all_temps.append(r['sea_surface_temperature'])
@@ -160,8 +160,8 @@ async def get_interpolated():
     obs_coords = np.column_stack([all_lats, all_lons])
     obs_temps = np.array(all_temps)
 
-    grid_lats = np.linspace(-34.300, -33.700, 80)
-    grid_lons = np.linspace(24.840, 26.360, 80)
+    grid_lats = np.linspace(-34.300, -33.700, 60)
+    grid_lons = np.linspace(24.840, 26.360, 60)
 
     MIN_TEMP, MAX_TEMP = 16.0, 24.0
 
@@ -584,7 +584,7 @@ function tempToColor(intensity) {
 
 L.CanvasHeatOverlay = L.Layer.extend({
     _points: [],
-    _cellSize: 0.021,
+    _cellSize: 0.027,
 
     setPoints(pts) { this._points = pts; this._redraw(); },
 
