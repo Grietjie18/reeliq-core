@@ -45,20 +45,21 @@ VALID_API_KEYS = {"2026_Reeliq_dev18"}
 # (lon, lat) pairs — shapely uses (x, y) = (lon, lat)
 ALGOA_BAY_POLYGON = Polygon([
     (25.380, -34.180),  # SW offshore Jeffreys Bay
-    (25.380, -34.050),  # West offshore
-    (25.480, -33.970),  # Jeffreys Bay point
-    (25.580, -33.920),  # Seal Point area
-    (25.650, -33.870),  # Cape St Francis
-    (25.750, -33.830),  # Offshore north
-    (25.870, -33.790),  # Towards PE
-    (25.960, -33.780),  # Cape Recife approach
-    (26.020, -33.800),  # Cape Recife
-    (26.060, -33.830),  # PE harbour entrance — keep offshore
-    (26.100, -33.870),  # East of PE
-    (26.180, -33.880),  # Eastern bay north
-    (26.280, -33.920),  # Eastern bay
-    (26.320, -34.020),  # Eastern offshore
-    (26.320, -34.180),  # SE corner offshore
+    (25.380, -34.080),  # West offshore
+    (25.460, -34.020),  # Jeffreys Bay point offshore
+    (25.540, -33.980),  # Seal Point offshore
+    (25.620, -33.940),  # Cape St Francis offshore
+    (25.720, -33.900),  # Offshore north
+    (25.820, -33.870),  # Towards PE offshore
+    (25.920, -33.860),  # Cape Recife offshore
+    (25.980, -33.870),  # Cape Recife east
+    (26.020, -33.900),  # PE harbour — stay offshore
+    (26.060, -33.930),  # East of PE harbour
+    (26.120, -33.920),  # Eastern bay
+    (26.200, -33.940),  # Eastern bay
+    (26.280, -33.970),  # Eastern bay far
+    (26.320, -34.050),  # Eastern offshore
+    (26.320, -34.180),  # SE corner
     (25.380, -34.180),  # Close polygon
 ])
 
@@ -122,8 +123,8 @@ async def get_interpolated():
     obs_temps = np.array([r['sea_surface_temperature'] for r in rows])
 
     # 50x50 grid — good resolution across full bay
-    grid_lats = np.linspace(-34.180, -33.780, 50)
-    grid_lons = np.linspace(25.380, 26.320, 50)
+    grid_lats = np.linspace(-34.180, -33.860, 80)
+    grid_lons = np.linspace(25.380, 26.320, 80)
 
     MIN_TEMP, MAX_TEMP = 16.0, 22.0
 
@@ -579,7 +580,7 @@ function tempToColor(intensity) {
 // Canvas is redrawn on every map move/zoom — no pixel-bleed artefacts
 L.CanvasHeatOverlay = L.Layer.extend({
     _points: [],
-    _cellSize: 0.02, // degrees — matches grid resolution
+    _cellSize: 0.0125, // degrees — matches grid resolution
 
     setPoints(pts) { this._points = pts; this._redraw(); },
 
