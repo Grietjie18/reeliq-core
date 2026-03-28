@@ -60,7 +60,5 @@ def fetch():
     print(f"✅ Saved {len(points)} points to satellite_sst.json")
 
 if __name__ == "__main__":
-    # Find correct dataset ID
-    results = copernicusmarine.describe(contains=["SST", "L4", "NRT"])
-    for r in results.products:
-        print(r.product_id, "-", r.title)
+    fetch()
+        
