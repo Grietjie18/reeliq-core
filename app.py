@@ -30,8 +30,8 @@ class Observation(BaseModel):
 DATABASE_URL = os.getenv("DATABASE_URL")
 
 # If testing locally without a DB, this handles the error gracefully
-if not DATABASE_URL:
-    DATABASE_URL = "sqlite:///./test.db"  # Fallback to local file for safety
+if DATABASE_URL and DATABASE_URL.startswith("postgres://"):
+    DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
 
 database = Database(DATABASE_URL)
 metadata = MetaData()
