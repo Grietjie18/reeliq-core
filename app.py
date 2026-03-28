@@ -44,23 +44,32 @@ VALID_API_KEYS = {"2026_Reeliq_dev18"}
 # Tightly traced to exclude PE harbour, coastline and land
 # (lon, lat) pairs — shapely uses (x, y) = (lon, lat)
 ALGOA_BAY_POLYGON = Polygon([
-    (25.380, -34.100),  # SW offshore Jeffreys Bay
-    (25.380, -34.000),  # West offshore
-    (25.460, -33.940),  # Jeffreys Bay point offshore
-    (25.540, -33.900),  # Seal Point offshore
-    (25.620, -33.860),  # Cape St Francis offshore
-    (25.720, -33.820),  # Offshore north
-    (25.820, -33.790),  # Towards PE offshore
-    (25.920, -33.780),  # Cape Recife offshore
-    (25.980, -33.790),  # Cape Recife east
-    (26.020, -33.820),  # PE harbour — stay offshore
-    (26.060, -33.850),  # East of PE harbour
-    (26.120, -33.840),  # Eastern bay
-    (26.200, -33.860),  # Eastern bay
-    (26.280, -33.890),  # Eastern bay far
-    (26.320, -33.970),  # Eastern offshore
-    (26.320, -34.100),  # SE corner
-    (25.380, -34.100),  # Close polygon
+    # Offshore SW boundary
+    (24.869, -34.300),  # Offshore south of Shark Point
+    # Coastline traced west to east (lon, lat)
+    (24.869, -34.195),  # Shark Point / St Francis
+    (24.841, -34.145),  # Kromriver mouth
+    (24.912, -34.085),  # Ashton Bay
+    (24.921, -34.079),  # Marina Martinique
+    (24.925, -34.052),  # Main Beach JBay
+    (24.933, -34.032),  # Supertubes
+    (24.931, -34.011),  # Kabeljous Beach
+    (24.937, -34.005),  # Kabeljous Estuary
+    (25.034, -33.970),  # Gamtoos River Mouth
+    (25.213, -33.969),  # Van Stadens River Mouth
+    (25.402, -34.034),  # Kini Bay
+    (25.584, -34.048),  # Schoenmakerskop
+    (25.700, -34.029),  # Cape Recife
+    (25.644, -33.955),  # PE Harbour Mouth
+    (25.632, -33.865),  # Swartkops Estuary
+    (25.694, -33.815),  # Coega Harbour
+    (25.830, -33.727),  # East of PE
+    (26.080, -33.707),  # Further east
+    (26.298, -33.763),  # Eastern bay
+    (26.352, -33.760),  # Eastern edge
+    # Offshore return boundary
+    (26.352, -34.300),  # Offshore SE corner
+    (24.869, -34.300),  # Close polygon
 ])
 def is_ocean(lon, lat):
     return ALGOA_BAY_POLYGON.contains(Point(lon, lat))
@@ -122,8 +131,8 @@ async def get_interpolated():
     obs_temps = np.array([r['sea_surface_temperature'] for r in rows])
 
     # 50x50 grid — good resolution across full bay
-    grid_lats = np.linspace(-34.100, -33.780, 80)
-    grid_lons = np.linspace(25.380, 26.320, 80)
+    grid_lats = np.linspace(-34.300, -33.700, 80)
+    grid_lons = np.linspace(24.840, 26.360, 80)
 
     MIN_TEMP, MAX_TEMP = 16.0, 22.0
 
