@@ -108,3 +108,36 @@ async def get_all_data(limit: int = 100):
     """Returns the last 100 pings from the database for the map."""
     query = observations_table.select().order_by(observations_table.c.timestamp.desc()).limit(limit)
     return await database.fetch_all(query)
+    from fastapi.responses import HTMLResponse
+
+@app.get("/map", response_class=HTMLResponse)
+async def get_map():
+    # This fetches the latest 50 points from your Postgres database
+    query = observations_table.select().order_by(observations_table.c.timestamp.desc()).limit(50)
+    rows = await database.fetch_all(query)
+    
+    # Convert database rows to a format the map understands
+    points = ""
+    for row in rows:
+        points += f"L.marker([{row['latitude']}, {row['longitude']}]).addTo(map)"
+        points += f".bindPopup('Vessel: {row['vessel_id']}<br>Temp: {row['sea_surface_temperature']}°C');\n"
+
+    # This is the "Skin" of your map
+    html_content = f"""
+    <html>
+        <head>
+            <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+            <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+            <style>#map {{ height: 100vh; }}</style>
+        </head>
+        <body>
+            <div id="map"></div>
+            <script>
+                var map = L.map('map').setView([-34.05, 24.92], 12);
+                L.tileLayer('https://{{s}}.tile.openstreetmap.org/{{z}}/{{x}}/{{y}}.png').addTo(map);
+                {points}
+            </script>
+        </body>
+    </html>
+    """
+    return HTMLResponse(content=html_content)
