@@ -60,11 +60,14 @@ async def ingest_data(vessel_id: str, data: Observation, api_key: str = Query(..
 @app.get("/api/live")
 async def get_live_json():
     try:
-        # 1. Create a "Naive" time (stripping timezone info for the DB)
-        now = datetime.now(timezone.utc).replace(tzinfo=None)
-        time_limit = now - timedelta(hours=24)
+        # 1. Get current UTC time and strip timezone info for DB compatibility
+        now_utc = datetime.now(timezone.utc).replace(tzinfo=None)
         
-        # 2. Query the database
+        # 2. 130-minute window (2 hours for SAST/UTC offset + 10 mins of live tracks)
+        # This clears old 'land' points while keeping the map active.
+        time_limit = now_utc - timedelta(minutes=130)
+        
+        # 3. Query the database
         query = observations_table.select().where(
             observations_table.c.timestamp >= time_limit
         ).order_by(observations_table.c.timestamp.asc())
@@ -76,15 +79,19 @@ async def get_live_json():
             v_id = r['vessel_id']
             if v_id not in vessels: 
                 vessels[v_id] = {"path": [], "last": {}}
+            
+            # Append coordinates for the trail
             vessels[v_id]["path"].append([r['latitude'], r['longitude']])
+            
+            # Store the latest reading for the glowing dot and popup
             vessels[v_id]["last"] = {
                 "lat": r['latitude'], 
                 "lon": r['longitude'], 
                 "sst": r['sea_surface_temperature']
             }
         return vessels
+
     except Exception as e:
-        # This will show you the REAL error in your Render logs
         print(f"DATABASE ERROR: {e}")
         return JSONResponse(status_code=500, content={"error": str(e)})
 
