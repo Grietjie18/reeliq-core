@@ -664,7 +664,7 @@ function tempToColor(intensity) {
 // Canvas is redrawn on every map move/zoom — no pixel-bleed artefacts
 L.CanvasHeatOverlay = L.Layer.extend({
     _points: [],
-    _cellSize: 0.0125, // degrees — matches grid resolution
+    _cellSize: 0.021, // degrees — matches grid resolution
 
     setPoints(pts) { this._points = pts; this._redraw(); },
 
@@ -683,15 +683,23 @@ L.CanvasHeatOverlay = L.Layer.extend({
     },
 
     _redraw() {
-        if (!this._map || !this._points.length) return;
-        const size = this._map.getSize();
-        this._canvas.width  = size.x;
-        this._canvas.height = size.y;
-        const ctx = this._canvas.getContext('2d');
-        ctx.clearRect(0, 0, size.x, size.y);
+    if (!this._map || !this._points.length) return;
+    
+    // Lock canvas to screen coordinates during panning
+    const mapPane = this._map.getPanes().mapPane;
+    const transform = mapPane.style.transform;
+    const match = transform.match(/translate3d\((.+)px,\s*(.+)px/);
+    const dx = match ? -parseFloat(match[1]) : 0;
+    const dy = match ? -parseFloat(match[2]) : 0;
+    this._canvas.style.transform = `translate3d(${dx}px, ${dy}px, 0)`;
 
-        const bounds = this._map.getBounds();
-        const topLeft = this._map.latLngToContainerPoint(bounds.getNorthWest());
+    const size = this._map.getSize();
+    this._canvas.width  = size.x;
+    this._canvas.height = size.y;
+    const ctx = this._canvas.getContext('2d');
+    ctx.clearRect(0, 0, size.x, size.y);
+    const bounds = this._map.getBounds();
+    const topLeft = this._map.latLngToContainerPoint(bounds.getNorthWest());
 
         for (const [lat, lon, intensity] of this._points) {
             // Convert grid cell corners to pixels
