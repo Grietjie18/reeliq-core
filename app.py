@@ -1,7 +1,7 @@
 import os
 import uuid
 from typing import List, Optional
-from datetime import datetime
+from datetime import datetime, timedelta
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, Field
@@ -14,17 +14,11 @@ class Observation(BaseModel):
     timestamp: datetime = Field(default_factory=datetime.utcnow)
     latitude: float = Field(..., ge=-90, le=90)
     longitude: float = Field(..., ge=-180, le=180)
-    
-    # Core Marine Variables
     sea_surface_temperature: float 
     sea_surface_salinity: Optional[float] = None
     sea_surface_turbidity: Optional[float] = None
-    
-    # Propulsion Data
     speed_over_ground: float
     speed_through_water: float
-    
-    # Quality Control
     qc_flag: int = 0
 
 # --- 2. DATABASE & AUTH CONFIGURATION ---
@@ -32,7 +26,6 @@ DATABASE_URL = os.getenv("DATABASE_URL")
 if DATABASE_URL and DATABASE_URL.startswith("postgres://"):
     DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
 
-# Security Key (Matches your Render Environment Variable)
 MASTER_API_KEY = os.getenv("MASTER_API_KEY", "jbay-science-2026")
 
 database = Database(DATABASE_URL)
@@ -74,14 +67,9 @@ async def root():
     return {"message": "REEL IQ Core Online", "status": "Secure"}
 
 @app.post("/ingest/{vessel_id}")
-async def ingest_data(
-    vessel_id: str, 
-    data: Observation, 
-    api_key: str = Query(...)
-):
+async def ingest_data(vessel_id: str, data: Observation, api_key: str = Query(...)):
     if api_key != MASTER_API_KEY:
         raise HTTPException(status_code=401, detail="Invalid API Key")
-        
     try:
         query = observations_table.insert().values(
             observation_id=str(data.observation_id),
@@ -101,39 +89,66 @@ async def ingest_data(
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.get("/data")
-async def get_all_data(limit: int = 100):
-    query = observations_table.select().order_by(observations_table.c.timestamp.desc()).limit(limit)
-    return await database.fetch_all(query)
-
 @app.get("/map", response_class=HTMLResponse)
 async def get_map():
-    # Pull latest 50 points from Postgres
-    query = observations_table.select().order_by(observations_table.c.timestamp.desc()).limit(50)
+    # ⚡️ DEMO MODE: Only show data from the last 1 minute
+    time_limit = datetime.utcnow() - timedelta(minutes=1)
+    
+    query = observations_table.select().where(
+        observations_table.c.timestamp >= time_limit
+    ).order_by(observations_table.c.vessel_id, observations_table.c.timestamp.asc())
+    
     rows = await database.fetch_all(query)
     
-    # Generate map markers
-    points = ""
+    vessel_paths = {}
     for row in rows:
-        points += f"L.marker([{row['latitude']}, {row['longitude']}]).addTo(map)"
-        points += f".bindPopup('<b>Vessel:</b> {row['vessel_id']}<br><b>SST:</b> {row['sea_surface_temperature']}°C');\n"
+        v_id = row['vessel_id']
+        if v_id not in vessel_paths:
+            vessel_paths[v_id] = []
+        vessel_paths[v_id].append([row['latitude'], row['longitude']])
+
+    track_scripts = ""
+    for v_id, coords in vessel_paths.items():
+        if len(coords) > 1:
+            # Thin cyan lines for the 1-minute path
+            track_scripts += f"L.polyline({coords}, {{color: '#00f2ff', weight: 2, opacity: 0.5}}).addTo(map);\n"
+        
+        # Glowing dot for the current position
+        last_coord = coords[-1]
+        track_scripts += f"""
+            L.circleMarker({last_coord}, {{
+                radius: 7,
+                fillColor: "#00f2ff",
+                color: "#fff",
+                weight: 2,
+                fillOpacity: 1
+            }}).addTo(map).bindPopup('<b>Vessel:</b> {v_id}');
+        """
 
     html_content = f"""
     <html>
         <head>
-            <title>REEL IQ Live Map</title>
+            <title>REEL IQ | Live Offshore Monitor</title>
             <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
             <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-            <style>#map {{ height: 100vh; width: 100%; }} body {{ margin: 0; }}</style>
+            <style>
+                body {{ margin: 0; background: #06090f; }}
+                #map {{ height: 100vh; width: 100%; }}
+            </style>
         </head>
         <body>
             <div id="map"></div>
             <script>
-                var map = L.map('map').setView([-34.05, 24.92], 12);
-                L.tileLayer('https://{{s}}.tile.openstreetmap.org/{{z}}/{{x}}/{{y}}.png', {{
-                    attribution: '&copy; OpenStreetMap contributors'
+                var map = L.map('map', {{ zoomControl: false }}).setView([-34.14, 25.02], 11);
+                
+                L.tileLayer('https://{{s}}.basemaps.cartocdn.com/dark_all/{{z}}/{{x}}/{{y}}{{r}}.png', {{
+                    attribution: '&copy; CARTO'
                 }}).addTo(map);
-                {points}
+
+                {track_scripts}
+                
+                // Auto-refresh the page every 15 seconds for the demo
+                setTimeout(function(){{ location.reload(); }}, 15000);
             </script>
         </body>
     </html>
