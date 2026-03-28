@@ -3,7 +3,7 @@ import numpy as np
 import json
 import os
 import xarray as xr
-from datetime import date
+from datetime import date, timedelta
 from shapely.geometry import Point, Polygon
 
 ALGOA_BAY_POLYGON = Polygon([
@@ -21,8 +21,8 @@ def is_ocean(lon, lat):
     return ALGOA_BAY_POLYGON.contains(Point(lon, lat))
 
 def fetch():
-    today = date.today().isoformat()
-    print(f"Fetching Copernicus SST for {today}...")
+    yesterday = (date.today() - timedelta(days=1)).isoformat()
+    print(f"Fetching Copernicus SST for {yesterday}...")
 
     copernicusmarine.subset(
         dataset_id="METOFFICE-GLO-SST-L4-NRT-OBS-SST-V2",
@@ -31,8 +31,8 @@ def fetch():
         maximum_longitude=26.360,
         minimum_latitude=-34.300,
         maximum_latitude=-33.700,
-        start_datetime=today,
-        end_datetime=today,
+        start_datetime=yesterday,
+        end_datetime=yesterday,
         output_filename="sst_raw.nc",
         output_directory=".",
     )
@@ -54,7 +54,7 @@ def fetch():
             if is_ocean(float(lon), float(lat)):
                 points.append([float(lat), float(lon), temp_c])
 
-    output = {"date": today, "points": points}
+    output = {"date": yesterday, "points": points}
     with open("satellite_sst.json", "w") as f:
         json.dump(output, f)
 
