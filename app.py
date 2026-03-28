@@ -44,25 +44,24 @@ VALID_API_KEYS = {"2026_Reeliq_dev18"}
 # Tightly traced to exclude PE harbour, coastline and land
 # (lon, lat) pairs — shapely uses (x, y) = (lon, lat)
 ALGOA_BAY_POLYGON = Polygon([
-    (25.380, -34.180),  # SW offshore Jeffreys Bay
-    (25.380, -34.080),  # West offshore
-    (25.460, -34.020),  # Jeffreys Bay point offshore
-    (25.540, -33.980),  # Seal Point offshore
-    (25.620, -33.940),  # Cape St Francis offshore
-    (25.720, -33.900),  # Offshore north
-    (25.820, -33.870),  # Towards PE offshore
-    (25.920, -33.860),  # Cape Recife offshore
-    (25.980, -33.870),  # Cape Recife east
-    (26.020, -33.900),  # PE harbour — stay offshore
-    (26.060, -33.930),  # East of PE harbour
-    (26.120, -33.920),  # Eastern bay
-    (26.200, -33.940),  # Eastern bay
-    (26.280, -33.970),  # Eastern bay far
-    (26.320, -34.050),  # Eastern offshore
-    (26.320, -34.180),  # SE corner
-    (25.380, -34.180),  # Close polygon
+    (25.380, -34.100),  # SW offshore Jeffreys Bay
+    (25.380, -34.000),  # West offshore
+    (25.460, -33.940),  # Jeffreys Bay point offshore
+    (25.540, -33.900),  # Seal Point offshore
+    (25.620, -33.860),  # Cape St Francis offshore
+    (25.720, -33.820),  # Offshore north
+    (25.820, -33.790),  # Towards PE offshore
+    (25.920, -33.780),  # Cape Recife offshore
+    (25.980, -33.790),  # Cape Recife east
+    (26.020, -33.820),  # PE harbour — stay offshore
+    (26.060, -33.850),  # East of PE harbour
+    (26.120, -33.840),  # Eastern bay
+    (26.200, -33.860),  # Eastern bay
+    (26.280, -33.890),  # Eastern bay far
+    (26.320, -33.970),  # Eastern offshore
+    (26.320, -34.100),  # SE corner
+    (25.380, -34.100),  # Close polygon
 ])
-
 def is_ocean(lon, lat):
     return ALGOA_BAY_POLYGON.contains(Point(lon, lat))
 
@@ -123,7 +122,7 @@ async def get_interpolated():
     obs_temps = np.array([r['sea_surface_temperature'] for r in rows])
 
     # 50x50 grid — good resolution across full bay
-    grid_lats = np.linspace(-34.180, -33.860, 80)
+    grid_lats = np.linspace(-34.100, -33.780, 80)
     grid_lons = np.linspace(25.380, 26.320, 80)
 
     MIN_TEMP, MAX_TEMP = 16.0, 22.0
