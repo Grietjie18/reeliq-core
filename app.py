@@ -1,5 +1,10 @@
 import os, uuid
 import numpy as np
+import copernicusmarine
+import xarray as xr
+import numpy as np
+from datetime import date
+from functools import lru_cache
 from scipy.interpolate import RBFInterpolator
 from shapely.geometry import Point, Polygon
 from datetime import datetime, timedelta, timezone
@@ -83,6 +88,57 @@ class Observation(BaseModel):
     sea_surface_temperature: float
     speed_over_ground: float
     speed_through_water: float
+# --- COPERNICUS SST FETCH ---
+# Cached daily — only re-fetches when date changes
+_copernicus_cache = {"date": None, "points": []}
+
+async def get_satellite_sst():
+    today = date.today().isoformat()
+    if _copernicus_cache["date"] == today and _copernicus_cache["points"]:
+        return _copernicus_cache["points"]
+    
+    try:
+        username = os.getenv("COPERNICUS_USERNAME")
+        password = os.getenv("COPERNICUS_PASSWORD")
+
+        # SST product — Mediterranean/Global L4 analysis
+        # OSTIA global product, daily, 0.05 degree resolution
+        ds = copernicusmarine.open_dataset(
+            dataset_id="SST_GLO_SST_L4_NRT_OBSERVATIONS_010_001",
+            username=username,
+            password=password,
+            minimum_longitude=24.840,
+            maximum_longitude=26.360,
+            minimum_latitude=-34.300,
+            maximum_latitude=-33.700,
+            start_datetime=today,
+            end_datetime=today,
+            variables=["analysed_sst"]
+        )
+
+        # Extract SST values — convert from Kelvin to Celsius
+        sst_data = ds['analysed_sst'].isel(time=0)
+        lats = sst_data.latitude.values
+        lons = sst_data.longitude.values
+        
+        points = []
+        for i, lat in enumerate(lats):
+            for j, lon in enumerate(lons):
+                val = float(sst_data.values[i, j])
+                if np.isnan(val):
+                    continue
+                temp_c = val - 273.15  # Kelvin to Celsius
+                if is_ocean(lon, lat):
+                    points.append((float(lat), float(lon), temp_c))
+        
+        _copernicus_cache["date"] = today
+        _copernicus_cache["points"] = points
+        print(f"✅ Copernicus SST fetched: {len(points)} points")
+        return points
+
+    except Exception as e:
+        print(f"⚠️ Copernicus fetch failed: {e}")
+        return []    
 
 @app.on_event("startup")
 async def startup():
@@ -123,24 +179,44 @@ async def get_interpolated():
     )
     rows = await database.fetch_all(query)
 
-    if len(rows) < 3:
+    # --- SATELLITE BASELINE ---
+    satellite_points = await get_satellite_sst()
+
+    # --- COMBINE SATELLITE + VESSEL DATA ---
+    all_lats = []
+    all_lons = []
+    all_temps = []
+
+    # Satellite points — base weight 1.0
+    for lat, lon, temp in satellite_points:
+        all_lats.append(lat)
+        all_lons.append(lon)
+        all_temps.append(temp)
+
+    # Vessel observations — higher weight, repeat 5x to dominate locally
+    # This means real vessel data overrides satellite where vessels have been
+    for r in rows:
+        for _ in range(5):
+            all_lats.append(r['latitude'])
+            all_lons.append(r['longitude'])
+            all_temps.append(r['sea_surface_temperature'])
+
+    if len(all_lats) < 3:
         return JSONResponse([])
 
-    obs_lats = np.array([r['latitude'] for r in rows])
-    obs_lons = np.array([r['longitude'] for r in rows])
-    obs_temps = np.array([r['sea_surface_temperature'] for r in rows])
+    obs_coords = np.column_stack([all_lats, all_lons])
+    obs_temps = np.array(all_temps)
 
-    # 50x50 grid — good resolution across full bay
+    # Grid across full Algoa Bay
     grid_lats = np.linspace(-34.300, -33.700, 80)
     grid_lons = np.linspace(24.840, 26.360, 80)
 
-    MIN_TEMP, MAX_TEMP = 16.0, 22.0
+    MIN_TEMP, MAX_TEMP = 16.0, 24.0
 
-    obs_coords = np.column_stack([obs_lats, obs_lons])
     interpolator = RBFInterpolator(
         obs_coords, obs_temps,
         kernel='linear',
-        smoothing=0.1
+        smoothing=0.5
     )
 
     result = []
