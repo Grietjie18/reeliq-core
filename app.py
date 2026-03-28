@@ -59,18 +59,34 @@ async def ingest_data(vessel_id: str, data: Observation, api_key: str = Query(..
 # LIVE DATA API (Used by the Map to update without flashing)
 @app.get("/api/live")
 async def get_live_json():
-    # 24-hour window to bypass any local/server timezone conflicts
-    time_limit = datetime.now(timezone.utc) - timedelta(hours=24)
-    query = observations_table.select().where(observations_table.c.timestamp >= time_limit).order_by(observations_table.c.timestamp.asc())
-    rows = await database.fetch_all(query)
-    
-    vessels = {}
-    for r in rows:
-        v_id = r['vessel_id']
-        if v_id not in vessels: vessels[v_id] = {"path": [], "last": {}}
-        vessels[v_id]["path"].append([r['latitude'], r['longitude']])
-        vessels[v_id]["last"] = {"lat": r['latitude'], "lon": r['longitude'], "sst": r['sea_surface_temperature']}
-    return vessels
+    try:
+        # 1. Create a "Naive" time (stripping timezone info for the DB)
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
+        time_limit = now - timedelta(hours=24)
+        
+        # 2. Query the database
+        query = observations_table.select().where(
+            observations_table.c.timestamp >= time_limit
+        ).order_by(observations_table.c.timestamp.asc())
+        
+        rows = await database.fetch_all(query)
+        
+        vessels = {}
+        for r in rows:
+            v_id = r['vessel_id']
+            if v_id not in vessels: 
+                vessels[v_id] = {"path": [], "last": {}}
+            vessels[v_id]["path"].append([r['latitude'], r['longitude']])
+            vessels[v_id]["last"] = {
+                "lat": r['latitude'], 
+                "lon": r['longitude'], 
+                "sst": r['sea_surface_temperature']
+            }
+        return vessels
+    except Exception as e:
+        # This will show you the REAL error in your Render logs
+        print(f"DATABASE ERROR: {e}")
+        return JSONResponse(status_code=500, content={"error": str(e)})
 
 # HOME PAGE (The Map Dashboard)
 @app.get("/", response_class=HTMLResponse)
