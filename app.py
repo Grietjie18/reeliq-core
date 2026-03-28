@@ -57,13 +57,6 @@ async def ingest_data(vessel_id: str, data: Observation, api_key: str = Query(..
     await database.execute(query); return {"status": "success"}
 
 # LIVE DATA API (Used by the Map to update without flashing)
-@app.get("/wipe-data")
-async def wipe_data(api_key: str = Query(...)):
-    if api_key != MASTER_API_KEY:
-        raise HTTPException(status_code=401)
-    query = observations_table.delete()
-    await database.execute(query)
-    return {"status": "success", "message": "Ocean cleared. Start your simulator now!"}
 @app.get("/api/live")
 async def get_live_json():
     try:
