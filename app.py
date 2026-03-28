@@ -101,56 +101,77 @@ async def get_map():
     html_content = """
     <html>
         <head>
-            <title>REEL IQ | Live Monitor</title>
+            <title>REEL IQ | Thermal Ocean Monitor</title>
             <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
             <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+            <script src="https://leaflet.github.io/Leaflet.heat/dist/leaflet-heat.js"></script>
             <style>
-                body { margin: 0; background: #06090f; color: #00f2ff; font-family: sans-serif; overflow: hidden; }
-                #map { height: 100vh; width: 100%; z-index: 1; }
-                #overlay { position: absolute; top: 20px; left: 20px; z-index: 1000; background: rgba(0,18,25,0.85); padding: 15px; border-radius: 8px; border: 1px solid #00f2ff; min-width: 150px; }
+                body { margin: 0; background: #06090f; color: #00f2ff; font-family: sans-serif; }
+                #map { height: 100vh; width: 100%; }
+                #overlay { 
+                    position: absolute; top: 20px; left: 20px; z-index: 1000; 
+                    background: rgba(0,18,25,0.9); padding: 15px; border-radius: 8px; 
+                    border: 1px solid #00f2ff;
+                }
+                /* This ensures the heatmap doesn't 'glow' onto the land too much */
+                .leaflet-heatmap-layer { opacity: 0.8; mix-blend-mode: screen; }
             </style>
         </head>
         <body>
             <div id="overlay">
-                <b style="font-size: 1.2em;">REEL IQ CORE</b><br>
-                <small style="opacity: 0.7;">Offshore Monitoring</small>
-                <hr style="border: 0.5px solid #00f2ff; opacity: 0.3; margin: 10px 0;">
-                <div id="stats">Checking Database...</div>
+                <b>REEL IQ | OCEAN THERMAL</b><br>
+                <small id="status">Syncing Research Vessels...</small>
             </div>
             <div id="map"></div>
             <script>
+                // Centered on the Bay
                 var map = L.map('map', { zoomControl: false, attributionControl: false }).setView([-34.14, 25.02], 11);
-                L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png').addTo(map);
                 
-                var layers = L.layerGroup().addTo(map);
+                // Dark Base Layer
+                L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png').addTo(map);
 
-                async function updateData() {
+                // Heatmap Configuration: Large radius + high blur = Smooth "Windy" look
+                var heatLayer = L.heatLayer([], {
+                    radius: 80, 
+                    blur: 50,
+                    max: 1.0,
+                    gradient: {
+                        0.0: 'blue', 
+                        0.4: 'cyan', 
+                        0.6: 'lime', 
+                        0.8: 'yellow', 
+                        1.0: 'red'
+                    }
+                }).addTo(map);
+
+                async function updateOceanHeat() {
                     try {
                         const response = await fetch('/api/live');
                         const data = await response.json();
-                        layers.clearLayers(); 
                         
-                        let count = 0;
+                        let points = [];
                         for (const [v_id, info] of Object.entries(data)) {
-                            count++;
-                            // Draw Tracks (Polylines)
-                            if (info.path.length > 1) {
-                                L.polyline(info.path, {color: '#00f2ff', weight: 1.5, opacity: 0.4}).addTo(layers);
-                            }
-                            // Draw Vessel Dot (CircleMarker)
-                            L.circleMarker([info.last.lat, info.last.lon], {
-                                radius: 7, fillColor: "#00f2ff", color: "#fff", weight: 2, fillOpacity: 1
-                            }).addTo(layers).bindPopup('<b>' + v_id + '</b><br>SST: ' + info.last.sst + '°C');
+                            // Normalize SST: 15°C (0.0) to 25°C (1.0)
+                            let intensity = (info.last.sst - 15) / 10;
+                            if (intensity < 0) intensity = 0.1;
+                            if (intensity > 1) intensity = 1.0;
+
+                            // We add the current point AND historical path points 
+                            // to "fill" the ocean area where the boat has been.
+                            info.path.forEach(coord => {
+                                points.push([coord[0], coord[1], intensity]);
+                            });
                         }
-                        document.getElementById('stats').innerText = "Vessels Active: " + count;
+
+                        heatLayer.setLatLngs(points);
+                        document.getElementById('status').innerText = "Vessels Syncing: " + Object.keys(data).length;
                     } catch (e) {
-                        console.log("Update failed, retrying...");
+                        console.error("Heatmap Sync Error");
                     }
                 }
 
-                // Smoothly update every 10 seconds (No screen flash)
-                setInterval(updateData, 10000);
-                updateData(); // Run once on page load
+                setInterval(updateOceanHeat, 10000);
+                updateOceanHeat();
             </script>
         </body>
     </html>
