@@ -219,8 +219,11 @@ async def get_vessel(vessel_id: str):
         "efficiency_label": efficiency_label,
         "timestamp": row['timestamp'].isoformat()
     }
-
 @app.get("/", response_class=HTMLResponse)
+async def get_landing():
+    with open("landing.html", "r") as f:
+        return HTMLResponse(content=f.read())
+@app.get("/app", response_class=HTMLResponse)
 async def get_map():
     html_content = r"""
 <!DOCTYPE html>
