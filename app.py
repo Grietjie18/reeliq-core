@@ -677,7 +677,7 @@ function showApp() {
     appEl.style.display = 'flex';
     appEl.style.position = 'relative';
     if (!map) {
-        map = L.map('map', { zoomControl: true, attributionControl: false })
+        map = L.map('map', { zoomControl: true, attributionControl: false, zoomAnimation: false })
                 .setView([-34.0, 25.85], 10);
         L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png').addTo(map);
         heatLayer = new L.CanvasHeatOverlay().addTo(map);
