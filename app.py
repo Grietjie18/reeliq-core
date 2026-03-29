@@ -603,27 +603,27 @@ L.CanvasHeatOverlay = L.Layer.extend({
     },
 
     _redraw() {
-        if (!this._map || !this._points.length) return;
-        const mapPane = this._map.getPanes().mapPane;
-        const transform = mapPane.style.transform;
-        const match = transform.match(/translate3d\((.+)px,\s*(.+)px/);
-        const dx = match ? -parseFloat(match[1]) : 0;
-        const dy = match ? -parseFloat(match[2]) : 0;
-        this._canvas.style.transform = `translate3d(${dx}px, ${dy}px, 0)`;
-        const size = this._map.getSize();
-        this._canvas.width  = size.x;
-        this._canvas.height = size.y;
-        const ctx = this._canvas.getContext('2d');
-        ctx.clearRect(0, 0, size.x, size.y);
-        for (const [lat, lon, intensity] of this._points) {
-            const pxNW = this._map.latLngToContainerPoint([lat + this._cellSize/2, lon - this._cellSize/2]);
-            const pxSE = this._map.latLngToContainerPoint([lat - this._cellSize/2, lon + this._cellSize/2]);
-            const w = Math.ceil(pxSE.x - pxNW.x) + 1;
-            const h = Math.ceil(pxSE.y - pxNW.y) + 1;
-            const [r,g,b] = tempToColor(intensity);
-            ctx.fillStyle = `rgba(${r},${g},${b},0.72)`;
-            ctx.fillRect(pxNW.x, pxNW.y, w, h);
-        }
+    if (!this._map || !this._points.length) return;
+    const mapPane = this._map.getPanes().mapPane;
+    const transform = mapPane.style.transform;
+    const match = transform.match(/translate3d\((.+)px,\s*(.+)px/);
+    const dx = match ? -parseFloat(match[1]) : 0;
+    const dy = match ? -parseFloat(match[2]) : 0;
+    this._canvas.style.transform = `translate3d(${dx}px, ${dy}px, 0)`;
+    const size = this._map.getSize();
+    this._canvas.width  = size.x;
+    this._canvas.height = size.y;
+    const ctx = this._canvas.getContext('2d');
+    ctx.clearRect(0, 0, size.x, size.y);
+    for (const [lat, lon, intensity] of this._points) {
+        const pxNW = this._map.latLngToContainerPoint([lat + this._cellSize/2, lon - this._cellSize/2]);
+        const pxSE = this._map.latLngToContainerPoint([lat - this._cellSize/2, lon + this._cellSize/2]);
+        const w = Math.ceil(pxSE.x - pxNW.x) + 1;
+        const h = Math.ceil(pxSE.y - pxNW.y) + 1;
+        const [r,g,b] = tempToColor(intensity);
+        ctx.fillStyle = `rgba(${r},${g},${b},0.72)`;
+        ctx.fillRect(pxNW.x, pxNW.y, w, h);
+    }
     }
 });
 
