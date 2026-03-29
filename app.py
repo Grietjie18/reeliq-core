@@ -594,14 +594,23 @@ L.CanvasHeatOverlay = L.Layer.extend({
         this._canvas.style.cssText = 'position:absolute;pointer-events:none;';
 map.getPanes().overlayPane.appendChild(this._canvas);
         map.on('move zoom resize', this._redraw, this);
+map.on('zoomstart', this._hide, this);
+map.on('zoomend', this._redraw, this);
         this._redraw();
     },
 
     onRemove(map) {
         map.getPanes().overlayPane.removeChild(this._canvas);
-        map.off('move zoom resize', this._redraw, this);
+        map.off('move zoom resize', this._redraw, this); map.off('zoomstart', this._hide, this);
+map.off('zoomend', this._redraw, this);
     },
+_hide() {
+    if (this._canvas) this._canvas.style.opacity = '0';
+},
 
+_show() {
+    if (this._canvas) this._canvas.style.opacity = '1';
+},
     _redraw() {
     if (!this._map || !this._points.length) return;
 
@@ -627,7 +636,7 @@ map.getPanes().overlayPane.appendChild(this._canvas);
         const h = Math.ceil(pxSE.y - pxNW.y) + 1;
         const [r,g,b] = tempToColor(intensity);
         ctx.fillStyle = `rgba(${r},${g},${b},0.72)`;
-        ctx.fillRect(x, y, w, h);
+        ctx.fillRect(x, y, w, h);this._canvas.style.opacity = '1';
     }
 }
 });
