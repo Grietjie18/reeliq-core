@@ -636,7 +636,9 @@ _show() {
         const h = Math.ceil(pxSE.y - pxNW.y) + 1;
         const [r,g,b] = tempToColor(intensity);
         ctx.fillStyle = `rgba(${r},${g},${b},0.72)`;
-        ctx.fillRect(x, y, w, h);this._canvas.style.opacity = '1';
+        ctx.fillRect(x, y, w, h);
+    }
+    this._canvas.style.opacity = '1';
     }
 }
 });
