@@ -640,7 +640,6 @@ _show() {
     }
     this._canvas.style.opacity = '1';
     }
-}
 });
 
 async function doLogin() {
