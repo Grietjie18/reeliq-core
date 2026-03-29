@@ -591,8 +591,8 @@ L.CanvasHeatOverlay = L.Layer.extend({
     onAdd(map) {
         this._map = map;
         this._canvas = document.createElement('canvas');
-        this._canvas.style.cssText = 'position:absolute;top:0;left:0;pointer-events:none;';
-        map.getPanes().overlayPane.appendChild(this._canvas);
+        this._canvas.style.cssText = 'position:absolute;pointer-events:none;';
+map.getPanes().overlayPane.appendChild(this._canvas);
         map.on('move zoom resize', this._redraw, this);
         this._redraw();
     },
@@ -604,27 +604,32 @@ L.CanvasHeatOverlay = L.Layer.extend({
 
     _redraw() {
     if (!this._map || !this._points.length) return;
-    const mapPane = this._map.getPanes().mapPane;
-    const transform = mapPane.style.transform;
-    const match = transform.match(/translate3d\((.+)px,\s*(.+)px/);
-    const dx = match ? -parseFloat(match[1]) : 0;
-    const dy = match ? -parseFloat(match[2]) : 0;
-    this._canvas.style.transform = `translate3d(${dx}px, ${dy}px, 0)`;
+
+    const topLeft = this._map.getBounds().getNorthWest();
+    const origin = this._map.latLngToLayerPoint(topLeft);
     const size = this._map.getSize();
-    this._canvas.width  = size.x;
+
+    this._canvas.width = size.x;
     this._canvas.height = size.y;
+    this._canvas.style.transform = '';
+    this._canvas.style.left = origin.x + 'px';
+    this._canvas.style.top = origin.y + 'px';
+
     const ctx = this._canvas.getContext('2d');
     ctx.clearRect(0, 0, size.x, size.y);
+
     for (const [lat, lon, intensity] of this._points) {
-        const pxNW = this._map.latLngToContainerPoint([lat + this._cellSize/2, lon - this._cellSize/2]);
-        const pxSE = this._map.latLngToContainerPoint([lat - this._cellSize/2, lon + this._cellSize/2]);
+        const pxNW = this._map.latLngToLayerPoint([lat + this._cellSize/2, lon - this._cellSize/2]);
+        const pxSE = this._map.latLngToLayerPoint([lat - this._cellSize/2, lon + this._cellSize/2]);
+        const x = pxNW.x - origin.x;
+        const y = pxNW.y - origin.y;
         const w = Math.ceil(pxSE.x - pxNW.x) + 1;
         const h = Math.ceil(pxSE.y - pxNW.y) + 1;
         const [r,g,b] = tempToColor(intensity);
         ctx.fillStyle = `rgba(${r},${g},${b},0.72)`;
-        ctx.fillRect(pxNW.x, pxNW.y, w, h);
+        ctx.fillRect(x, y, w, h);
     }
-    }
+}
 });
 
 async function doLogin() {
