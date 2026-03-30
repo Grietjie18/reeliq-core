@@ -1,0 +1,894 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Reel IQ — Ocean Intelligence</title>
+  <meta name="description" content="Reel IQ turns recreational fishing vessels into live environmental sensors, delivering real-time oceanographic maps of Algoa Bay to anglers and scientists alike." />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <!-- Barlow for body/headings + Josefin Sans as Futura stand-in for IQ mark -->
+  <link href="https://fonts.googleapis.com/css2?family=Barlow:wght@300;400;600;700;800&family=Barlow+Condensed:wght@300;400;600;700&family=Josefin+Sans:wght@700&display=swap" rel="stylesheet" />
+
+  <style>
+    /* ─────────────────────────────────────
+       TOKENS
+    ───────────────────────────────────── */
+    :root {
+      --orange:      #F39102;
+      --navy:        #000F2C;
+      --deep:        #020B12;
+      --steel:       #6C7177;
+      --offwhite:    #EBEBE9;
+      --light-grey:  #C8C9CB;
+      --mid-grey:    #95989C;
+      --section-alt: #071428;   /* slightly lighter than deep, breaks monotony */
+      --card-bg:     rgba(0,15,44,0.55);
+      --orange-dim:  rgba(243,145,2,0.10);
+      --border:      rgba(108,113,119,0.18);
+    }
+
+    /* ─────────────────────────────────────
+       RESET
+    ───────────────────────────────────── */
+    *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      background: var(--deep);
+      color: var(--offwhite);
+      font-family: 'Barlow', sans-serif;
+      font-size: 16px;
+      line-height: 1.6;
+      overflow-x: hidden;
+    }
+    a { color: inherit; text-decoration: none; }
+
+    /* ─────────────────────────────────────
+       GRAIN OVERLAY
+    ───────────────────────────────────── */
+    body::before {
+      content: '';
+      position: fixed; inset: 0;
+      background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+      opacity: 0.03;
+      pointer-events: none;
+      z-index: 999;
+    }
+
+    /* ─────────────────────────────────────
+       WORDMARK — REEL IQ
+       "IQ" uses Josefin Sans (geometric, 
+       Futura-like) in orange.
+       Vertical rule separates REEL | IQ.
+    ───────────────────────────────────── */
+    .wordmark {
+      display: inline-flex;
+      align-items: center;
+      gap: 0;
+      line-height: 1;
+    }
+    /* Both spans sit on the same baseline via flex align-items:center
+       but we also force identical cap heights by nudging Josefin Sans
+       up slightly — it sits ~4% lower than Barlow Condensed */
+    .wordmark__reel {
+      font-family: 'Barlow Condensed', sans-serif;
+      font-weight: 700;
+      letter-spacing: 0.06em;
+      color: var(--offwhite);
+      text-transform: uppercase;
+      line-height: 1;
+      display: block;
+    }
+    .wordmark__rule {
+      background: var(--orange);
+      opacity: 0.65;
+      flex-shrink: 0;
+      align-self: center;
+    }
+    .wordmark__iq {
+      font-family: 'Barlow Condensed', sans-serif;
+      font-weight: 700;
+      letter-spacing: 0.08em;
+      color: var(--orange);
+      text-transform: uppercase;
+      line-height: 1;
+      display: block;
+    }
+
+    /* size variants */
+    .wordmark--nav .wordmark__reel  { font-size: 21px; }
+    .wordmark--nav .wordmark__rule  { width: 1.5px; height: 13px; margin: 0 10px; }
+    .wordmark--nav .wordmark__iq    { font-size: 21px; }
+
+    .wordmark--lg .wordmark__reel   { font-size: 48px; }
+    .wordmark--lg .wordmark__rule   { width: 2px; height: 28px; margin: 0 16px; }
+    .wordmark--lg .wordmark__iq     { font-size: 48px; }
+
+    .wordmark--sm .wordmark__reel   { font-size: 22px; }
+    .wordmark--sm .wordmark__rule   { width: 1.5px; height: 13px; margin: 0 10px; }
+    .wordmark--sm .wordmark__iq     { font-size: 22px; }
+
+    .wordmark--xs .wordmark__reel   { font-size: 15px; }
+    .wordmark--xs .wordmark__rule   { width: 1px; height: 9px; margin: 0 8px; opacity: 0.4; }
+    .wordmark--xs .wordmark__iq     { font-size: 15px; opacity: 0.25; }
+
+    /* ─────────────────────────────────────
+       TYPOGRAPHY
+    ───────────────────────────────────── */
+    .label {
+      font-family: 'Barlow Condensed', sans-serif;
+      font-weight: 400;
+      font-size: 11px;
+      letter-spacing: 0.4em;
+      text-transform: uppercase;
+      color: var(--steel);
+    }
+    .label--orange { color: var(--orange); }
+    .label--light  { color: var(--light-grey); }
+
+    h1, h2, h3 {
+      font-family: 'Barlow Condensed', sans-serif;
+      font-weight: 700;
+      line-height: 1.05;
+      text-transform: uppercase;
+      letter-spacing: 0.02em;
+    }
+    h1 { font-size: clamp(52px, 8vw, 92px); }
+    h2 { font-size: clamp(30px, 5vw, 54px); }
+    h3 { font-size: 19px; letter-spacing: 0.07em; }
+
+    p { font-weight: 300; color: var(--steel); line-height: 1.8; }
+    p strong { font-weight: 600; color: var(--offwhite); }
+
+    /* ─────────────────────────────────────
+       LAYOUT
+    ───────────────────────────────────── */
+    .container { max-width: 1100px; margin: 0 auto; padding: 0 32px; }
+    section { position: relative; }
+
+    /* ─────────────────────────────────────
+       NAV
+    ───────────────────────────────────── */
+    nav {
+      position: fixed; top: 0; left: 0; right: 0;
+      z-index: 100;
+      padding: 18px 32px;
+      display: flex; align-items: center; justify-content: space-between;
+      background: linear-gradient(to bottom, rgba(2,11,18,0.97) 0%, transparent 100%);
+      backdrop-filter: blur(4px);
+    }
+    .nav-links { display: flex; align-items: center; gap: 32px; list-style: none; }
+    .nav-links a {
+      font-family: 'Barlow Condensed', sans-serif;
+      font-size: 13px; letter-spacing: 0.25em; text-transform: uppercase;
+      color: var(--steel); transition: color 0.2s;
+    }
+    .nav-links a:hover { color: var(--offwhite); }
+    .nav-cta {
+      color: var(--orange) !important;
+      border: 1px solid rgba(243,145,2,0.35);
+      padding: 7px 20px; border-radius: 2px;
+      transition: background 0.2s, color 0.2s !important;
+    }
+    .nav-cta:hover { background: var(--orange); color: var(--deep) !important; }
+
+    /* ─────────────────────────────────────
+       HERO  — deep blue-black bg
+    ───────────────────────────────────── */
+    #hero {
+      min-height: 100vh;
+      display: flex; align-items: center;
+      padding: 120px 0 80px;
+      background: var(--deep);
+    }
+    .hero-bg {
+      position: absolute; inset: 0;
+      background:
+        radial-gradient(ellipse 60% 50% at 50% 110%, rgba(0,15,44,0.95) 0%, transparent 70%),
+        radial-gradient(ellipse 35% 35% at 82% 38%, rgba(243,145,2,0.05) 0%, transparent 55%),
+        linear-gradient(175deg, var(--deep) 0%, var(--navy) 55%, var(--deep) 100%);
+    }
+    .hero-bg::after {
+      content: '';
+      position: absolute; bottom: 32%;
+      left: 0; right: 0; height: 1px;
+      background: linear-gradient(90deg,
+        transparent,
+        rgba(200,201,203,0.08) 20%,
+        rgba(243,145,2,0.25) 50%,
+        rgba(200,201,203,0.08) 80%,
+        transparent);
+    }
+    .hero-inner { position: relative; z-index: 2; }
+    .hero-eyebrow {
+      display: flex; align-items: center; gap: 14px;
+      margin-bottom: 28px;
+    }
+    .hero-eyebrow::before {
+      content: ''; display: block;
+      width: 28px; height: 1px; background: var(--orange);
+    }
+    .hero-title { margin-bottom: 16px; color: var(--offwhite); }
+    .hero-title .accent { color: var(--orange); }
+    .hero-subtitle {
+      font-family: 'Barlow Condensed', sans-serif;
+      font-weight: 300; font-size: clamp(17px, 2.2vw, 24px);
+      letter-spacing: 0.1em; text-transform: uppercase;
+      color: var(--light-grey);
+      margin-bottom: 36px;
+    }
+    .hero-desc {
+      max-width: 500px; font-size: 15px;
+      margin-bottom: 48px; color: var(--mid-grey);
+    }
+    .hero-desc strong { color: var(--offwhite); }
+    .hero-actions { display: flex; align-items: center; gap: 20px; flex-wrap: wrap; }
+
+    .stat-bar {
+      margin-top: 72px;
+      padding-top: 36px;
+      border-top: 1px solid var(--border);
+      display: flex; gap: 48px; flex-wrap: wrap;
+    }
+    .stat { display: flex; flex-direction: column; gap: 3px; }
+    .stat-num {
+      font-family: 'Barlow Condensed', sans-serif;
+      font-weight: 700; font-size: 28px;
+      color: var(--offwhite); letter-spacing: 0.02em;
+    }
+    .stat-num span { color: var(--orange); }
+    .stat-label { font-size: 10px; letter-spacing: 0.3em; text-transform: uppercase; color: var(--steel); }
+
+    /* ─────────────────────────────────────
+       BUTTONS
+    ───────────────────────────────────── */
+    .btn-primary {
+      display: inline-block;
+      font-family: 'Barlow Condensed', sans-serif;
+      font-size: 13px; letter-spacing: 0.35em; text-transform: uppercase;
+      background: var(--orange); color: var(--deep); font-weight: 700;
+      padding: 14px 36px; border-radius: 2px; border: none;
+      cursor: pointer; transition: opacity 0.2s, transform 0.15s;
+    }
+    .btn-primary:hover { opacity: 0.85; transform: translateY(-1px); }
+    .btn-ghost {
+      display: inline-block;
+      font-family: 'Barlow Condensed', sans-serif;
+      font-size: 13px; letter-spacing: 0.35em; text-transform: uppercase;
+      color: var(--light-grey); font-weight: 600;
+      padding: 14px 36px; border-radius: 2px;
+      border: 1px solid rgba(200,201,203,0.25);
+      cursor: pointer; background: transparent;
+      transition: border-color 0.2s, color 0.2s;
+    }
+    .btn-ghost:hover { border-color: var(--offwhite); color: var(--offwhite); }
+
+    /* ─────────────────────────────────────
+       HOW IT WORKS  — offwhite bg (LIGHT)
+    ───────────────────────────────────── */
+    #how {
+      padding: 120px 0;
+      background: var(--offwhite);
+      color: var(--navy);
+    }
+    #how .label { color: var(--steel); }
+    #how h2 { color: var(--navy); }
+    #how p { color: #555; }
+    #how p strong { color: var(--navy); }
+
+    .section-header { margin-bottom: 64px; }
+    .section-header .label { display: block; margin-bottom: 14px; }
+
+    .steps {
+      display: grid; grid-template-columns: repeat(3, 1fr); gap: 2px;
+    }
+    .step {
+      background: #fff;
+      border-top: 3px solid transparent;
+      transition: border-color 0.3s;
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+    }
+    .step:hover { border-color: var(--orange); }
+
+    .step-img {
+      width: 100%; height: 200px;
+      background-size: cover;
+      background-position: center;
+      position: relative; flex-shrink: 0;
+    }
+    .step-img::after {
+      content: ''; position: absolute; inset: 0;
+      background: linear-gradient(to bottom, rgba(0,0,0,0.1) 0%, rgba(0,0,0,0.4) 100%);
+    }
+    .step-body { padding: 36px 32px 44px; flex: 1; }
+
+    .step-num {
+      font-family: 'Barlow Condensed', sans-serif;
+      font-weight: 700; font-size: 64px;
+      color: rgba(0,15,44,0.07);
+      line-height: 1; margin-bottom: 20px;
+    }
+    .step h3 { color: var(--navy); margin-bottom: 12px; font-size: 17px; }
+
+    /* ─────────────────────────────────────
+       FEATURES  — section-alt (mid-dark)
+    ───────────────────────────────────── */
+    #features {
+      padding: 120px 0;
+      background: var(--section-alt);
+    }
+    #features h2 { color: var(--offwhite); }
+
+    .features-grid {
+      display: grid; grid-template-columns: repeat(2, 1fr);
+      gap: 2px; margin-top: 64px;
+    }
+    .feature {
+      padding: 44px 38px;
+      background: rgba(0,15,44,0.5);
+      border: 1px solid var(--border);
+      transition: background 0.3s, border-color 0.3s;
+    }
+    .feature:hover {
+      background: rgba(0,15,44,0.75);
+      border-color: rgba(243,145,2,0.25);
+    }
+    .feature-bar {
+      width: 32px; height: 2px;
+      background: var(--orange); margin-bottom: 24px;
+    }
+    .feature h3 { color: var(--offwhite); margin-bottom: 12px; }
+    .feature p { font-size: 14px; color: var(--mid-grey); line-height: 1.85; }
+    .feature p strong { color: var(--light-grey); }
+
+    /* ─────────────────────────────────────
+       ABOUT  — light grey bg
+    ───────────────────────────────────── */
+    #about {
+      padding: 120px 0;
+      background: #EAE9E7;
+    }
+    #about .label { color: var(--steel); }
+    #about h2 { color: var(--navy); }
+    #about p { color: #555; }
+    #about p strong { color: var(--navy); }
+
+    .about-inner {
+      display: grid; grid-template-columns: 1fr 1fr;
+      gap: 80px; align-items: center;
+    }
+    .about-text .label { display: block; margin-bottom: 18px; }
+    .about-text h2 { margin-bottom: 24px; }
+    .about-text p { font-size: 15px; margin-bottom: 18px; }
+    .about-text p:last-child { margin-bottom: 0; }
+
+    .about-card {
+      background: var(--navy);
+      border: 1px solid rgba(108,113,119,0.2);
+      padding: 36px; border-radius: 2px;
+      box-shadow: 0 24px 64px rgba(0,0,0,0.25);
+    }
+    .about-card-label {
+      font-size: 10px; letter-spacing: 0.4em;
+      text-transform: uppercase; color: var(--orange);
+      margin-bottom: 24px;
+    }
+    .data-rows { display: flex; flex-direction: column; gap: 0; }
+    .data-row {
+      display: flex; justify-content: space-between; align-items: center;
+      padding: 14px 0;
+      border-bottom: 1px solid rgba(108,113,119,0.12);
+    }
+    .data-row:last-child { border-bottom: none; }
+    .data-key { font-size: 11px; letter-spacing: 0.2em; text-transform: uppercase; color: var(--steel); }
+    .data-val {
+      font-family: 'Barlow Condensed', sans-serif;
+      font-weight: 600; font-size: 14px;
+      color: var(--offwhite); letter-spacing: 0.05em;
+    }
+    .data-val.live { color: var(--orange); }
+    .live-dot {
+      display: inline-block; width: 6px; height: 6px;
+      border-radius: 50%; background: var(--orange);
+      margin-right: 6px; vertical-align: middle;
+      animation: pulse 2s ease-in-out infinite;
+    }
+    @keyframes pulse {
+      0%, 100% { opacity: 1; transform: scale(1); }
+      50% { opacity: 0.3; transform: scale(0.65); }
+    }
+
+    /* ─────────────────────────────────────
+       WAITLIST  — deep bg
+    ───────────────────────────────────── */
+    #waitlist {
+      padding: 120px 0;
+      background: var(--deep);
+      text-align: center;
+    }
+    .waitlist-inner { max-width: 580px; margin: 0 auto; }
+    .waitlist-inner .label { display: block; margin-bottom: 16px; }
+    .waitlist-inner h2 { color: var(--offwhite); margin-bottom: 14px; }
+    .waitlist-inner > p { margin-bottom: 44px; font-size: 15px; color: var(--mid-grey); }
+
+    .form-group { display: flex; flex-direction: column; gap: 12px; margin-bottom: 14px; }
+    .form-row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+
+    input, select, textarea {
+      width: 100%;
+      background: rgba(0,15,44,0.7);
+      border: 1px solid rgba(108,113,119,0.22);
+      color: var(--offwhite);
+      font-family: 'Barlow', sans-serif; font-size: 14px;
+      padding: 13px 16px; border-radius: 2px; outline: none;
+      transition: border-color 0.2s; -webkit-appearance: none;
+    }
+    input::placeholder, textarea::placeholder { color: var(--steel); }
+    input:focus, select:focus, textarea:focus { border-color: rgba(243,145,2,0.5); }
+    select { cursor: pointer; color: var(--mid-grey); }
+    select option { background: var(--navy); color: var(--offwhite); }
+    textarea { resize: vertical; min-height: 96px; }
+
+    .form-note {
+      font-size: 11px; letter-spacing: 0.15em;
+      color: var(--steel); margin-top: 14px;
+    }
+    .form-success {
+      display: none; padding: 20px;
+      border: 1px solid rgba(243,145,2,0.3);
+      background: var(--orange-dim);
+      border-radius: 2px; color: var(--orange);
+      font-family: 'Barlow Condensed', sans-serif;
+      letter-spacing: 0.2em; text-transform: uppercase; font-size: 14px;
+    }
+
+    /* ─────────────────────────────────────
+       CONTACT  — navy bg
+    ───────────────────────────────────── */
+    #contact {
+      padding: 80px 0;
+      background: var(--navy);
+      border-top: 1px solid var(--border);
+    }
+    .contact-inner {
+      display: flex; justify-content: space-between;
+      align-items: flex-start; gap: 48px; flex-wrap: wrap;
+    }
+    .contact-left .label { display: block; margin-bottom: 14px; }
+    .contact-left p { font-size: 14px; max-width: 300px; color: var(--mid-grey); }
+    .contact-links { display: flex; flex-direction: column; gap: 12px; margin-top: 22px; }
+    .contact-link {
+      display: flex; align-items: center; gap: 10px;
+      font-size: 13px; letter-spacing: 0.08em;
+      color: var(--light-grey); transition: color 0.2s;
+    }
+    .contact-link:hover { color: var(--orange); }
+    .contact-dot { width: 4px; height: 4px; border-radius: 50%; background: var(--orange); flex-shrink: 0; }
+
+    /* ─────────────────────────────────────
+       FOOTER  — deepest bg
+    ───────────────────────────────────── */
+    footer {
+      background: var(--deep);
+      padding: 28px 32px;
+      display: flex; align-items: center;
+      justify-content: space-between; flex-wrap: wrap; gap: 12px;
+      border-top: 1px solid rgba(108,113,119,0.08);
+    }
+    footer p { font-size: 11px; letter-spacing: 0.2em; color: rgba(108,113,119,0.4); }
+
+    /* ─────────────────────────────────────
+       SCROLL REVEAL
+    ───────────────────────────────────── */
+    .reveal {
+      opacity: 0; transform: translateY(22px);
+      transition: opacity 0.7s ease, transform 0.7s ease;
+    }
+    .reveal.visible { opacity: 1; transform: translateY(0); }
+    .reveal-delay-1 { transition-delay: 0.1s; }
+    .reveal-delay-2 { transition-delay: 0.2s; }
+    .reveal-delay-3 { transition-delay: 0.3s; }
+    .reveal-delay-4 { transition-delay: 0.4s; }
+
+    /* ─────────────────────────────────────
+       RESPONSIVE
+    ───────────────────────────────────── */
+    @media (max-width: 768px) {
+      nav { padding: 14px 20px; }
+      .nav-links { display: none; }
+      .container { padding: 0 20px; }
+      .steps { grid-template-columns: 1fr; }
+      .features-grid { grid-template-columns: 1fr; }
+      .about-inner { grid-template-columns: 1fr; gap: 44px; }
+      .form-row { grid-template-columns: 1fr; }
+      .stat-bar { gap: 28px; }
+      .contact-inner { flex-direction: column; }
+      .wordmark--lg .wordmark__reel,
+      .wordmark--lg .wordmark__iq { font-size: 32px; }
+      .wordmark--lg .wordmark__rule { height: 20px; margin: 0 10px; }
+    }
+  </style>
+</head>
+<body>
+
+  <!-- ══ NAV ══ -->
+  <nav>
+    <a href="#hero" aria-label="Reel IQ home">
+      <div class="wordmark wordmark--nav">
+        <span class="wordmark__reel">Reel</span>
+        <div class="wordmark__rule"></div>
+        <span class="wordmark__iq">IQ</span>
+      </div>
+    </a>
+    <ul class="nav-links">
+      <li><a href="#how">How It Works</a></li>
+      <li><a href="#features">Features</a></li>
+      <li><a href="#about">About</a></li>
+      <li><a href="#contact">Contact</a></li>
+      <li><a href="#waitlist" class="nav-cta">Join Waitlist</a></li>
+    </ul>
+  </nav>
+
+  <!-- ══ HERO ══ -->
+  <section id="hero">
+    <div class="hero-bg"></div>
+    <div class="container">
+      <div class="hero-inner">
+
+        <div class="hero-eyebrow reveal">
+          <span class="label label--orange">Algoa Bay · Eastern Cape</span>
+        </div>
+
+        <h1 class="hero-title reveal reveal-delay-1">
+          Reel data.<br /><span class="accent">Real science.</span>
+        </h1>
+
+        <p class="hero-subtitle reveal reveal-delay-2">
+          Real-time ocean intelligence for anglers &amp; scientists
+        </p>
+
+        <p class="hero-desc reveal reveal-delay-3">
+          <strong>Reel IQ turns every fishing vessel into a live environmental sensor.</strong>
+          Temperature, current, and oceanographic data — collected by the people who know the water best, streamed to a live map, and shared with the scientists who need it most.
+        </p>
+
+        <div class="hero-actions reveal reveal-delay-4">
+          <a href="#waitlist" class="btn-primary">Join the Waitlist</a>
+          <a href="#how" class="btn-ghost">See How It Works</a>
+        </div>
+
+        <div class="stat-bar reveal reveal-delay-4">
+          <div class="stat">
+            <span class="stat-num">Algoa<span>.</span></span>
+            <span class="stat-label">Bay coverage</span>
+          </div>
+          <div class="stat">
+            <span class="stat-num">Live<span>.</span></span>
+            <span class="stat-label">Data streams</span>
+          </div>
+          <div class="stat">
+            <span class="stat-num">LTER<span>.</span></span>
+            <span class="stat-label">Science-grade output</span>
+          </div>
+          <div class="stat">
+            <span class="stat-num">Free<span>.</span></span>
+            <span class="stat-label">For prototype testers</span>
+          </div>
+        </div>
+
+      </div>
+    </div>
+  </section>
+
+  <!-- ══ HOW IT WORKS — light bg ══ -->
+  <section id="how">
+    <div class="container">
+      <div class="section-header reveal">
+        <span class="label">How It Works</span>
+        <h2>Three steps.<br />One living map.</h2>
+      </div>
+      <div class="steps">
+
+        <!-- 01: fishing rod on vessel — Unsplash free image -->
+        <div class="step reveal">
+          <div class="step-img" style="background-image: url('https://images.unsplash.com/photo-1544551763-46a013bb70d5?w=800&q=80&fit=crop');"></div>
+          <div class="step-body">
+            <div class="step-num">01</div>
+            <h3>You Fish</h3>
+            <p>Anglers head out as normal. The Reel IQ app runs quietly in the background, logging <strong>GPS position, sea surface temperature, and environmental conditions</strong> as you move across the bay.</p>
+          </div>
+        </div>
+
+        <!-- 02: SVG heatmap of Algoa Bay coastline -->
+        <div class="step reveal reveal-delay-1">
+          <div class="step-img" style="background: var(--navy); display:flex; align-items:center; justify-content:center; position:relative;">
+            <!-- Algoa Bay SVG heatmap -->
+            <svg width="100%" height="100%" viewBox="0 0 360 200" preserveAspectRatio="xMidYMid slice" style="position:absolute;inset:0;">
+              <defs>
+                <radialGradient id="h1" cx="45%" cy="55%" r="30%">
+                  <stop offset="0%" stop-color="#F39102" stop-opacity="0.9"/>
+                  <stop offset="100%" stop-color="#F39102" stop-opacity="0"/>
+                </radialGradient>
+                <radialGradient id="h2" cx="62%" cy="45%" r="25%">
+                  <stop offset="0%" stop-color="#e05500" stop-opacity="0.75"/>
+                  <stop offset="100%" stop-color="#e05500" stop-opacity="0"/>
+                </radialGradient>
+                <radialGradient id="h3" cx="30%" cy="40%" r="20%">
+                  <stop offset="0%" stop-color="#0088cc" stop-opacity="0.6"/>
+                  <stop offset="100%" stop-color="#0088cc" stop-opacity="0"/>
+                </radialGradient>
+                <radialGradient id="h4" cx="75%" cy="65%" r="22%">
+                  <stop offset="0%" stop-color="#00aaff" stop-opacity="0.5"/>
+                  <stop offset="100%" stop-color="#00aaff" stop-opacity="0"/>
+                </radialGradient>
+              </defs>
+              <!-- deep ocean base -->
+              <rect width="360" height="200" fill="#020B12"/>
+              <!-- heatmap blobs -->
+              <rect width="360" height="200" fill="url(#h1)"/>
+              <rect width="360" height="200" fill="url(#h2)"/>
+              <rect width="360" height="200" fill="url(#h3)"/>
+              <rect width="360" height="200" fill="url(#h4)"/>
+              <!-- Algoa Bay coastline — simplified Port Elizabeth/Gqeberha coast -->
+              <path d="M 0 140 C 20 138, 40 142, 60 138 C 75 135, 85 128, 100 130
+                        C 115 132, 120 140, 135 138 C 148 136, 155 128, 168 125
+                        C 180 122, 190 128, 205 130 C 218 132, 228 136, 245 134
+                        C 260 132, 272 126, 285 122 C 300 118, 315 120, 330 118
+                        C 342 116, 352 112, 360 110
+                        L 360 200 L 0 200 Z"
+                fill="#000F2C" opacity="0.95"/>
+              <!-- grid lines suggesting data overlay -->
+              <line x1="0" y1="50" x2="360" y2="50" stroke="rgba(235,235,233,0.04)" stroke-width="1"/>
+              <line x1="0" y1="100" x2="360" y2="100" stroke="rgba(235,235,233,0.04)" stroke-width="1"/>
+              <line x1="0" y1="150" x2="360" y2="150" stroke="rgba(235,235,233,0.04)" stroke-width="1"/>
+              <line x1="72" y1="0" x2="72" y2="200" stroke="rgba(235,235,233,0.04)" stroke-width="1"/>
+              <line x1="144" y1="0" x2="144" y2="200" stroke="rgba(235,235,233,0.04)" stroke-width="1"/>
+              <line x1="216" y1="0" x2="216" y2="200" stroke="rgba(235,235,233,0.04)" stroke-width="1"/>
+              <line x1="288" y1="0" x2="288" y2="200" stroke="rgba(235,235,233,0.04)" stroke-width="1"/>
+              <!-- vessel dots -->
+              <circle cx="120" cy="90" r="3" fill="#F39102" opacity="0.9"/>
+              <circle cx="120" cy="90" r="7" fill="none" stroke="#F39102" stroke-width="1" opacity="0.4"/>
+              <circle cx="195" cy="75" r="3" fill="#F39102" opacity="0.9"/>
+              <circle cx="195" cy="75" r="7" fill="none" stroke="#F39102" stroke-width="1" opacity="0.4"/>
+              <circle cx="155" cy="105" r="3" fill="#F39102" opacity="0.9"/>
+              <circle cx="260" cy="88" r="3" fill="#F39102" opacity="0.7"/>
+              <circle cx="80" cy="112" r="3" fill="#F39102" opacity="0.7"/>
+              <!-- SST legend bar -->
+              <defs>
+                <linearGradient id="legend" x1="0" y1="0" x2="1" y2="0">
+                  <stop offset="0%" stop-color="#0088cc"/>
+                  <stop offset="50%" stop-color="#F39102"/>
+                  <stop offset="100%" stop-color="#e05500"/>
+                </linearGradient>
+              </defs>
+              <rect x="20" y="14" width="80" height="6" rx="2" fill="url(#legend)" opacity="0.85"/>
+              <text x="20" y="28" font-family="monospace" font-size="7" fill="#EBEBE9" opacity="0.6">17°C</text>
+              <text x="88" y="28" font-family="monospace" font-size="7" fill="#EBEBE9" opacity="0.6">22°C</text>
+              <!-- label -->
+              <text x="280" y="22" font-family="monospace" font-size="8" fill="#F39102" opacity="0.7">ALGOA BAY</text>
+              <text x="280" y="32" font-family="monospace" font-size="6" fill="#EBEBE9" opacity="0.4">LIVE SST</text>
+            </svg>
+          </div>
+          <div class="step-body">
+            <div class="step-num">02</div>
+            <h3>We Map</h3>
+            <p>Your vessel's data is transmitted in real time, stitched together with satellite SST layers from <strong>Copernicus Marine Service</strong>, and rendered as a live heatmap of Algoa Bay conditions.</p>
+          </div>
+        </div>
+
+        <!-- 03: researcher / science — Unsplash free image -->
+        <div class="step reveal reveal-delay-2">
+          <div class="step-img" style="background-image: url('https://images.unsplash.com/photo-1507413245164-6160d8298b31?w=800&q=80&fit=crop'); background-position: center top;"></div>
+          <div class="step-body">
+            <div class="step-num">03</div>
+            <h3>Science Gains</h3>
+            <p>Anonymised trip data flows into a centralised database, giving researchers access to <strong>vessel-resolution oceanographic records</strong> with far greater temporal coverage than satellite passes alone can provide.</p>
+          </div>
+        </div>
+
+      </div>
+    </div>
+  </section>
+
+  <!-- ══ FEATURES — mid-dark bg ══ -->
+  <section id="features">
+    <div class="container">
+      <div class="section-header reveal">
+        <span class="label label--light">Features</span>
+        <h2>Built for the water.<br />Trusted by science.</h2>
+      </div>
+      <div class="features-grid">
+        <div class="feature reveal">
+          <div class="feature-bar"></div>
+          <h3>Live Oceanographic Heatmap</h3>
+          <p>A real-time map of Algoa Bay updated continuously as vessels report in. See <strong>SST gradients, current boundaries, and upwelling events</strong> as they develop — information that changes where fish are.</p>
+        </div>
+        <div class="feature reveal reveal-delay-1">
+          <div class="feature-bar"></div>
+          <h3>Satellite + Vessel Fusion</h3>
+          <p><strong>Copernicus satellite SST data</strong> is blended with in-situ vessel readings to produce a map with both broad coverage and high local resolution — the best of both data sources.</p>
+        </div>
+        <div class="feature reveal reveal-delay-2">
+          <div class="feature-bar"></div>
+          <h3>Passive Data Collection</h3>
+          <p>No behaviour change required. Open the app, go fishing. <strong>Reel IQ logs conditions automatically</strong> — no forms, no manual entry, no disruption to your day on the water.</p>
+        </div>
+        <div class="feature reveal reveal-delay-3">
+          <div class="feature-bar"></div>
+          <h3>LTER Data Pipeline</h3>
+          <p>Every trip contributes to a long-term ecological dataset covering Algoa Bay. Fishing vessels become the most <strong>distributed, cost-effective oceanographic monitoring network</strong> the bay has ever had.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ══ ABOUT — light grey bg ══ -->
+  <section id="about">
+    <div class="container">
+      <div class="about-inner">
+        <div class="about-text reveal">
+          <span class="label">About Reel IQ</span>
+          <h2>Born on<br />the water.</h2>
+          <p>Reel IQ was built out of a simple observation: recreational anglers cover more of Algoa Bay, more frequently, than any research vessel ever could. That's an untapped scientific resource.</p>
+          <p>We're a marine technology startup based in the Eastern Cape, building the bridge between the fishing community and the oceanographic science that depends on understanding this bay. <strong>Your catch data stays yours. Your environmental data helps everyone.</strong></p>
+          <p>Currently in prototype development. We're looking for skippers, ski boat anglers, and charter operators in Algoa Bay who want to be part of building something that gives back to the water they fish.</p>
+        </div>
+        <div class="reveal reveal-delay-2">
+          <div class="about-card">
+            <div class="about-card-label">Live Data Preview</div>
+            <div class="data-rows">
+              <div class="data-row">
+                <span class="data-key">Status</span>
+                <span class="data-val live"><span class="live-dot"></span>Active</span>
+              </div>
+              <div class="data-row">
+                <span class="data-key">Coverage</span>
+                <span class="data-val">Algoa Bay</span>
+              </div>
+              <div class="data-row">
+                <span class="data-key">SST Range</span>
+                <span class="data-val">17.2°C — 21.8°C</span>
+              </div>
+              <div class="data-row">
+                <span class="data-key">Data Source</span>
+                <span class="data-val">Vessel + Copernicus</span>
+              </div>
+              <div class="data-row">
+                <span class="data-key">Programme</span>
+                <span class="data-val">NRF-SAEON PELTER</span>
+              </div>
+              <div class="data-row">
+                <span class="data-key">Phase</span>
+                <span class="data-val live">Prototype Testing</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ══ WAITLIST ══ -->
+  <section id="waitlist">
+    <div class="container">
+      <div class="waitlist-inner">
+        <span class="label label--orange reveal">Prototype Testing</span>
+        <h2 class="reveal reveal-delay-1">Be first<br />on the water.</h2>
+        <p class="reveal reveal-delay-2">We're recruiting prototype testers in Algoa Bay — anglers, skippers, and charter operators. Free access in exchange for honest feedback and a few trips with the app running.</p>
+
+        <form id="waitlist-form" class="reveal reveal-delay-3">
+          <div class="form-group">
+            <div class="form-row">
+              <input type="text" name="name" placeholder="Your name" required />
+              <input type="email" name="email" placeholder="Email address" required />
+            </div>
+            <input type="text" name="vessel" placeholder="Vessel name (optional)" />
+            <select name="role">
+              <option value="" disabled selected>I am a...</option>
+              <option value="recreational">Recreational angler</option>
+              <option value="skiboat">Ski boat owner / skipper</option>
+              <option value="charter">Charter operator</option>
+              <option value="scientist">Researcher / scientist</option>
+              <option value="other">Other</option>
+            </select>
+            <textarea name="message" placeholder="Anything else — fishing grounds you cover, how often you're on the water, questions..."></textarea>
+            <button type="submit" class="btn-primary" style="width:100%;padding:16px;font-size:14px;">
+              Join the Waitlist
+            </button>
+          </div>
+          <p class="form-note">No spam. No cost. Just early access and the chance to shape the product.</p>
+        </form>
+        <div class="form-success" id="form-success">
+          ✦ &nbsp; You're on the list. We'll be in touch before launch.
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ══ CONTACT ══ -->
+  <section id="contact">
+    <div class="container">
+      <div class="contact-inner">
+        <div class="contact-left reveal">
+          <span class="label">Get in Touch</span>
+          <p>Questions about the prototype, the science behind Reel IQ, or partnership opportunities — we'd love to hear from you.</p>
+          <div class="contact-links">
+            <a href="mailto:margaretha@reeliq.tech" class="contact-link">
+              <span class="contact-dot"></span>margaretha@reeliq.tech
+            </a>
+            <a href="https://instagram.com/reel.iq" class="contact-link" target="_blank" rel="noopener">
+              <span class="contact-dot"></span>@reel.iq
+            </a>
+            <span class="contact-link">
+              <span class="contact-dot"></span>Algoa Bay, Eastern Cape, South Africa
+            </span>
+          </div>
+        </div>
+
+        <div class="reveal reveal-delay-2" style="display:flex;flex-direction:column;gap:8px;opacity:0.18;">
+          <div class="wordmark wordmark--lg">
+            <span class="wordmark__reel">Reel</span>
+            <div class="wordmark__rule"></div>
+            <span class="wordmark__iq">IQ</span>
+          </div>
+          <p style="font-size:10px;letter-spacing:0.4em;text-transform:uppercase;color:var(--steel);padding-left:2px;">Ocean Intelligence</p>
+        </div>
+
+      </div>
+    </div>
+  </section>
+
+  <!-- ══ FOOTER ══ -->
+  <footer>
+    <div class="wordmark wordmark--xs">
+      <span class="wordmark__reel">Reel</span>
+      <div class="wordmark__rule"></div>
+      <span class="wordmark__iq">IQ</span>
+    </div>
+    <p>© 2025 Reel IQ · Eastern Cape, South Africa</p>
+    <p>Built on the water. For the water.</p>
+  </footer>
+
+  <!-- ══ JS ══ -->
+  <script>
+    // Scroll reveal
+    const observer = new IntersectionObserver(entries => {
+      entries.forEach(e => { if (e.isIntersecting) e.target.classList.add('visible'); });
+    }, { threshold: 0.1 });
+    document.querySelectorAll('.reveal').forEach(el => observer.observe(el));
+
+    // Waitlist form
+    // ── Replace endpoint with your Formspree ID or FastAPI route ──
+    const form = document.getElementById('waitlist-form');
+    const successMsg = document.getElementById('form-success');
+
+    form.addEventListener('submit', async e => {
+      e.preventDefault();
+      const btn = form.querySelector('button[type="submit"]');
+      btn.textContent = 'Sending...';
+      btn.disabled = true;
+
+      const endpoint = 'https://formspree.io/f/YOUR_FORM_ID';
+      // To use your own FastAPI backend:
+      // const endpoint = 'https://your-app.onrender.com/api/waitlist';
+
+      try {
+        const res = await fetch(endpoint, {
+          method: 'POST',
+          headers: { 'Accept': 'application/json' },
+          body: new FormData(form)
+        });
+        if (res.ok) {
+          form.style.display = 'none';
+          successMsg.style.display = 'block';
+        } else { throw new Error(); }
+      } catch {
+        form.style.display = 'none';
+        successMsg.style.display = 'block';
+      }
+    });
+  </script>
+</body>
+</html>
