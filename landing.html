@@ -262,6 +262,30 @@
       transition: border-color 0.2s, color 0.2s;
     }
     .btn-ghost:hover { border-color: var(--offwhite); color: var(--offwhite); }
+    .btn-demo {
+  display: inline-flex; align-items: center; gap: 10px;
+  font-family: 'Barlow Condensed', sans-serif;
+  font-size: 13px; letter-spacing: 0.35em; text-transform: uppercase;
+  color: var(--orange); font-weight: 700;
+  padding: 13px 32px; border-radius: 2px;
+  border: 1px solid rgba(243,145,2,0.4);
+  background: rgba(243,145,2,0.06);
+  transition: background 0.2s, border-color 0.2s;
+}
+.btn-demo:hover { background: rgba(243,145,2,0.14); border-color: var(--orange); }
+.btn-demo__dot {
+  display: inline-block; width: 7px; height: 7px;
+  border-radius: 50%; background: var(--orange);
+  animation: pulse 2s ease-in-out infinite; flex-shrink: 0;
+}
+.nav-demo {
+  font-family: 'Barlow Condensed', sans-serif;
+  font-size: 13px; letter-spacing: 0.25em; text-transform: uppercase;
+  color: var(--orange) !important;
+  display: inline-flex; align-items: center;
+  transition: opacity 0.2s;
+}
+.nav-demo:hover { opacity: 0.75; }
 
     /* ─────────────────────────────────────
        HOW IT WORKS  — offwhite bg (LIGHT)
@@ -528,6 +552,9 @@
       <li><a href="#about">About</a></li>
       <li><a href="#contact">Contact</a></li>
       <li><a href="#waitlist" class="nav-cta">Join Waitlist</a></li>
+      <li><a href="https://reeliq-core.onrender.com/app" target="_blank" rel="noopener" class="nav-demo">
+  <span style="width:6px;height:6px;border-radius:50%;background:#F39102;display:inline-block;margin-right:6px;"></span>Live Demo
+</a></li>
     </ul>
   </nav>
 
@@ -556,6 +583,9 @@
 
         <div class="hero-actions reveal reveal-delay-4">
           <a href="#waitlist" class="btn-primary">Join the Waitlist</a>
+          <a href="https://reeliq-core.onrender.com/app" target="_blank" rel="noopener" class="btn-demo">
+  <span class="btn-demo__dot"></span>Live Demo
+</a>
           <a href="#how" class="btn-ghost">See How It Works</a>
         </div>
 
