@@ -4,12 +4,14 @@ from scipy.interpolate import RBFInterpolator
 from shapely.geometry import Point, Polygon
 from datetime import datetime, timedelta, timezone, date
 from fastapi import FastAPI, Query, HTTPException
+from fastapi.staticfiles import StaticFiles
 from fastapi.responses import HTMLResponse, JSONResponse
 from pydantic import BaseModel, Field
 from databases import Database
 from sqlalchemy import create_engine, MetaData, Table, Column, Float, String, DateTime
 
 app = FastAPI()
+app.mount("/static", StaticFiles(directory="static"), name="static")
 
 # --- DATABASE CONFIG ---
 DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./test.db")
