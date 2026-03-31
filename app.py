@@ -55,6 +55,7 @@ ALGOA_BAY_POLYGON = Polygon(ALGOA_BAY_COORDS)
 def is_ocean(lon, lat):
     return ALGOA_BAY_POLYGON.contains(Point(lon, lat))
 
+# --- PYDANTIC MODEL ---
 class Observation(BaseModel):
     observation_id: uuid.UUID = Field(default_factory=uuid.uuid4)
     timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
@@ -64,6 +65,7 @@ class Observation(BaseModel):
     speed_over_ground: float
     speed_through_water: float
 
+# --- SATELLITE SST CACHE ---
 _copernicus_cache = {"date": None, "points": []}
 
 async def get_satellite_sst():
@@ -76,8 +78,10 @@ async def get_satellite_sst():
         points = [(p[0], p[1], p[2]) for p in data["points"]]
         _copernicus_cache["date"] = today
         _copernicus_cache["points"] = points
+        print(f"✅ Satellite SST loaded: {len(points)} points from {data['date']}")
         return points
-    except Exception:
+    except Exception as e:
+        print(f"⚠️ Could not load satellite_sst.json: {e}")
         return []
 
 @app.on_event("startup")
@@ -110,13 +114,18 @@ async def login(username: str = Query(...), password: str = Query(...)):
             return {"status": "ok", "vessel_id": vessel_id}
     raise HTTPException(status_code=401, detail="Invalid credentials")
 
+# --- NEW COASTLINE ENDPOINT ---
 @app.get("/api/coastline")
 async def get_coastline():
     try:
         with open("coastline.geojson", "r") as f:
             return JSONResponse(json.load(f))
     except FileNotFoundError:
-        return JSONResponse(status_code=404, content={"error": "file not found"})
+        return JSONResponse(status_code=404, content={"error": "coastline.geojson not found"})
+
+@app.get("/api/polygon")
+async def get_polygon():
+    return JSONResponse(ALGOA_BAY_COORDS)
 
 @app.get("/api/interpolated")
 async def get_interpolated():
@@ -161,7 +170,7 @@ async def get_vessel(vessel_id: str):
     ).order_by(observations_table.c.timestamp.desc()).limit(1)
     row = await database.fetch_one(query)
     if not row: raise HTTPException(status_code=404, detail="No recent data")
-    
+
     sog, stw = row['speed_over_ground'], row['speed_through_water']
     diff = stw - sog
     if diff > 0.5:
@@ -189,46 +198,259 @@ async def get_map():
 <html lang="en">
 <head>
     <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
     <title>REEL IQ</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
     <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&family=Share+Tech+Mono&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     <style>
-        :root { --cyan: #00f2ff; --bg: #04080f; --panel: rgba(4,12,22,0.92); --text: #cce8ff; --good: #00ff88; --bad: #ff3b3b; --warn: #ffb800; }
-        body { background: var(--bg); font-family: 'Share Tech Mono', monospace; color: var(--text); overflow: hidden; height: 100vh; margin:0; }
+        :root {
+            --cyan: #00f2ff;
+            --cyan-dim: rgba(0,242,255,0.15);
+            --cyan-border: rgba(0,242,255,0.4);
+            --bg: #04080f;
+            --panel: rgba(4,12,22,0.92);
+            --text: #cce8ff;
+            --warn: #ffb800;
+            --good: #00ff88;
+            --bad: #ff3b3b;
+        }
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body {
+            background: var(--bg);
+            font-family: 'Share Tech Mono', monospace;
+            color: var(--text);
+            overflow: hidden;
+            height: 100vh;
+        }
+        #login-screen {
+            position: fixed; inset: 0; z-index: 9999;
+            background: var(--bg);
+            display: flex; align-items: center; justify-content: center;
+            flex-direction: column;
+        }
+        .login-bg {
+            position: absolute; inset: 0;
+            background: radial-gradient(ellipse at 50% 60%, rgba(0,242,255,0.04) 0%, transparent 70%);
+        }
+        .login-box {
+            position: relative; z-index: 2;
+            width: min(420px, 92vw);
+            padding: 48px 40px;
+            border: 1px solid var(--cyan-border);
+            border-radius: 4px;
+            background: var(--panel);
+            backdrop-filter: blur(20px);
+        }
+        .login-logo {
+            font-family: 'Orbitron', sans-serif;
+            font-size: 2rem; font-weight: 900;
+            color: var(--cyan); letter-spacing: 0.15em;
+            margin-bottom: 4px;
+            text-shadow: 0 0 30px rgba(0,242,255,0.5);
+        }
+        .login-sub {
+            font-size: 0.7rem; color: rgba(0,242,255,0.5);
+            letter-spacing: 0.2em; margin-bottom: 40px;
+            text-transform: uppercase;
+        }
+        .login-field { margin-bottom: 16px; }
+        .login-field label {
+            display: block; font-size: 0.65rem;
+            letter-spacing: 0.2em; color: rgba(0,242,255,0.6);
+            margin-bottom: 8px; text-transform: uppercase;
+        }
+        .login-field input {
+            width: 100%; background: rgba(0,242,255,0.04);
+            border: 1px solid var(--cyan-border); border-radius: 2px;
+            padding: 12px 16px; color: var(--cyan);
+            font-family: 'Share Tech Mono', monospace; font-size: 0.95rem;
+            outline: none; transition: border-color 0.2s, background 0.2s;
+        }
+        .login-field input:focus { border-color: var(--cyan); background: rgba(0,242,255,0.08); }
+        .login-btn {
+            width: 100%; margin-top: 24px; padding: 14px;
+            background: transparent; border: 1px solid var(--cyan);
+            border-radius: 2px; color: var(--cyan);
+            font-family: 'Orbitron', sans-serif; font-size: 0.8rem;
+            font-weight: 700; letter-spacing: 0.2em; cursor: pointer;
+            text-transform: uppercase; transition: background 0.2s, box-shadow 0.2s;
+        }
+        .login-btn:hover { background: var(--cyan-dim); box-shadow: 0 0 20px rgba(0,242,255,0.2); }
+        .login-error {
+            margin-top: 12px; font-size: 0.7rem; color: var(--bad);
+            text-align: center; letter-spacing: 0.1em; min-height: 16px;
+        }
+        .login-demo {
+            margin-top: 20px; font-size: 0.65rem;
+            color: rgba(255,255,255,0.2); text-align: center; letter-spacing: 0.1em;
+        }
         #app-screen { display: none; height: 100vh; flex-direction: column; position: relative; }
-        #map { flex: 1; }
-        #login-screen { position: fixed; inset: 0; z-index: 9999; background: var(--bg); display: flex; align-items: center; justify-content: center; flex-direction: column; }
-        .login-box { padding: 40px; border: 1px solid rgba(0,242,255,0.4); background: var(--panel); border-radius: 4px; }
-        .login-btn { width: 100%; margin-top: 20px; padding: 10px; background: transparent; border: 1px solid var(--cyan); color: var(--cyan); cursor: pointer; }
-        #efficiency-bar { position: absolute; bottom: 0; left: 0; right: 0; z-index: 1000; background: var(--panel); padding: 12px; display: flex; justify-content: space-around; }
+        #map { flex: 1; background: var(--bg); }
+        #topbar {
+            position: absolute; top: 0; left: 0; right: 0; z-index: 1000;
+            display: flex; align-items: center; justify-content: space-between;
+            padding: 12px 16px;
+            background: linear-gradient(to bottom, rgba(4,8,15,0.95), transparent);
+            pointer-events: none;
+        }
+        .topbar-logo {
+            font-family: 'Orbitron', sans-serif; font-size: 1rem; font-weight: 900;
+            color: var(--cyan); letter-spacing: 0.15em;
+            text-shadow: 0 0 15px rgba(0,242,255,0.4);
+        }
+        .topbar-status { font-size: 0.65rem; color: rgba(0,242,255,0.5); letter-spacing: 0.12em; text-align: right; }
+        #live-dot {
+            display: inline-block; width: 6px; height: 6px; border-radius: 50%;
+            background: var(--good); margin-right: 6px; animation: pulse 1.5s infinite;
+        }
+        @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
+        #legend {
+            position: absolute; top: 60px; right: 16px; z-index: 1000;
+            background: var(--panel); border: 1px solid rgba(255,255,255,0.08);
+            border-radius: 4px; padding: 12px 10px;
+        }
+        .legend-bar {
+            width: 12px; height: 160px;
+            background: linear-gradient(to top, #0000ff 0%, #00ffff 25%, #00ff88 45%, #ffff00 65%, #ff8800 82%, #ff0000 100%);
+            border-radius: 2px;
+        }
+        .legend-labels {
+            display: flex; flex-direction: column; justify-content: space-between;
+            height: 160px; font-size: 0.6rem; color: rgba(255,255,255,0.5); margin-left: 6px;
+        }
+        .legend-row { display: flex; align-items: flex-start; gap: 6px; }
+        .legend-title { font-size: 0.55rem; color: rgba(255,255,255,0.3); letter-spacing: 0.1em; text-align: center; margin-bottom: 6px; }
+        #sst-panel {
+            position: absolute; top: 60px; left: 16px; z-index: 1000;
+            background: var(--panel); border: 1px solid var(--cyan-border);
+            border-radius: 4px; padding: 12px 16px; min-width: 180px;
+        }
+        .panel-label { font-size: 0.6rem; color: rgba(0,242,255,0.5); letter-spacing: 0.15em; text-transform: uppercase; margin-bottom: 4px; }
+        .panel-value { font-size: 1.1rem; color: var(--cyan); font-weight: bold; }
+        .panel-sub { font-size: 0.6rem; color: rgba(255,255,255,0.3); margin-top: 2px; }
+        #efficiency-bar {
+            position: absolute; bottom: 0; left: 0; right: 0; z-index: 1000;
+            background: var(--panel); border-top: 1px solid rgba(255,255,255,0.08);
+            padding: 12px 20px; display: flex; align-items: center; justify-content: space-between; gap: 16px;
+        }
+        .eff-block { display: flex; flex-direction: column; align-items: center; flex: 1; }
+        .eff-label { font-size: 0.55rem; color: rgba(255,255,255,0.3); letter-spacing: 0.15em; text-transform: uppercase; margin-bottom: 2px; }
+        .eff-value { font-size: 0.85rem; font-weight: bold; color: white; }
+        .eff-divider { width: 1px; height: 32px; background: rgba(255,255,255,0.1); }
+        #eff-status { font-size: 0.75rem; font-weight: bold; text-align: center; flex: 2; letter-spacing: 0.05em; }
+        #eff-status.good { color: var(--good); }
+        #eff-status.poor { color: var(--bad); }
+        #eff-status.neutral { color: var(--warn); }
+        #logout-btn {
+            position: absolute; bottom: 68px; right: 16px; z-index: 1001;
+            background: transparent; border: 1px solid rgba(255,255,255,0.15);
+            border-radius: 2px; color: rgba(255,255,255,0.3);
+            font-family: 'Share Tech Mono', monospace; font-size: 0.6rem;
+            letter-spacing: 0.1em; padding: 6px 10px; cursor: pointer;
+        }
+        #logout-btn:hover { color: var(--bad); border-color: var(--bad); }
     </style>
 </head>
 <body>
+
 <div id="login-screen">
+    <div class="login-bg"></div>
     <div class="login-box">
-        <h2 style="font-family:Orbitron; color:var(--cyan)">REEL IQ</h2>
-        <input type="text" id="username" placeholder="Username" style="display:block; margin: 10px 0; padding:8px; width:100%"/>
-        <input type="password" id="password" placeholder="Password" style="display:block; margin: 10px 0; padding:8px; width:100%"/>
-        <button class="login-btn" onclick="doLogin()">ACCESS</button>
-        <div id="login-error" style="color:var(--bad); font-size:12px; margin-top:10px"></div>
+        <div class="login-logo">REEL IQ</div>
+        <div class="login-sub">Ocean Intelligence Platform</div>
+        <div class="login-field">
+            <label>Vessel Username</label>
+            <input type="text" id="username" placeholder="skipper01" autocomplete="off"/>
+        </div>
+        <div class="login-field">
+            <label>Password</label>
+            <input type="password" id="password" placeholder="••••••••"/>
+        </div>
+        <button class="login-btn" onclick="doLogin()">ACCESS VESSEL DATA</button>
+        <div class="login-error" id="login-error"></div>
+        <div class="login-demo">Demo: username <b>demo</b> / password <b>demo</b></div>
     </div>
 </div>
+
 <div id="app-screen">
+    <div id="topbar">
+        <div class="topbar-logo">REEL IQ</div>
+        <div class="topbar-status">
+            <span id="live-dot"></span>
+            <span id="update-time">—</span>
+        </div>
+    </div>
+    <div id="sst-panel">
+        <div class="panel-label">SST Range</div>
+        <div class="panel-value" id="sst-range">—</div>
+        <div class="panel-sub" id="grid-points">Loading thermal grid...</div>
+    </div>
+    <div id="legend">
+        <div class="legend-title">SST °C</div>
+        <div class="legend-row">
+            <div class="legend-bar"></div>
+            <div class="legend-labels">
+                <span>24°</span><span>22°</span><span>20°</span>
+                <span>19°</span><span>18°</span><span>16°</span>
+            </div>
+        </div>
+    </div>
     <div id="map"></div>
     <div id="efficiency-bar">
-        <div id="sog-val">SOG: —</div>
-        <div id="eff-status">Loading...</div>
-        <div id="stw-val">STW: —</div>
+        <div class="eff-block">
+            <div class="eff-label">SOG</div>
+            <div class="eff-value" id="sog-val">— kts</div>
+        </div>
+        <div class="eff-divider"></div>
+        <div id="eff-status" class="neutral">Loading vessel data...</div>
+        <div class="eff-divider"></div>
+        <div class="eff-block">
+            <div class="eff-label">STW</div>
+            <div class="eff-value" id="stw-val">— kts</div>
+        </div>
     </div>
+    <button id="logout-btn" onclick="doLogout()">LOGOUT</button>
 </div>
+
 <script>
-let currentVesselId, map, heatLayer, vesselMarker;
+let currentVesselId = null;
+let map = null;
+let heatLayer = null;
+let vesselMarker = null;
+let oceanPolygonCoords = null; 
+
+function tempToColor(intensity) {
+    const stops = [
+        [0,   [0,   0,   255]],
+        [0.2, [0,   255, 255]],
+        [0.45,[0,   255, 136]],
+        [0.65,[255, 255, 0  ]],
+        [0.82,[255, 136, 0  ]],
+        [1.0, [255, 0,   0  ]],
+    ];
+    let lower = stops[0], upper = stops[stops.length-1];
+    for (let i = 0; i < stops.length - 1; i++) {
+        if (intensity >= stops[i][0] && intensity <= stops[i+1][0]) {
+            lower = stops[i]; upper = stops[i+1]; break;
+        }
+    }
+    const t = (intensity - lower[0]) / (upper[0] - lower[0]);
+    const r = Math.round(lower[1][0] + t * (upper[1][0] - lower[1][0]));
+    const g = Math.round(lower[1][1] + t * (upper[1][1] - lower[1][1]));
+    const b = Math.round(lower[1][2] + t * (upper[1][2] - lower[1][2]));
+    return [r, g, b];
+}
 
 L.CanvasHeatOverlay = L.Layer.extend({
-    _points: [], _cellSize: 0.027, _polygonCoords: null,
+    _points: [],
+    _cellSize: 0.027,
+    _polygonCoords: null, 
+
     setPoints(pts) { this._points = pts; this._redraw(); },
     setPolygon(coords) { this._polygonCoords = coords; this._redraw(); },
+
     onAdd(map) {
         this._map = map;
         this._canvas = document.createElement('canvas');
@@ -237,72 +459,138 @@ L.CanvasHeatOverlay = L.Layer.extend({
         map.on('move zoom resize', this._redraw, this);
         this._redraw();
     },
+
     _redraw() {
-        if (!this._map || !this._canvas) return;
-        const size = this._map.getSize();
-        this._canvas.width = size.x; this._canvas.height = size.y;
+        if (!this._map || !this._points.length) return;
         const topLeft = this._map.getBounds().getNorthWest();
         const origin = this._map.latLngToLayerPoint(topLeft);
-        this._canvas.style.left = origin.x + 'px'; this._canvas.style.top = origin.y + 'px';
+        const size = this._map.getSize();
+
+        this._canvas.width = size.x;
+        this._canvas.height = size.y;
+        this._canvas.style.left = origin.x + 'px';
+        this._canvas.style.top = origin.y + 'px';
+
         const ctx = this._canvas.getContext('2d');
+        ctx.clearRect(0, 0, size.x, size.y);
+
         ctx.save();
+        
+        // --- COASTLINE CLIPPING FIX ---
         if (this._polygonCoords) {
             ctx.beginPath();
             this._polygonCoords.forEach(([lon, lat], i) => {
                 const pt = this._map.latLngToLayerPoint([lat, lon]);
-                if (i === 0) ctx.moveTo(pt.x - origin.x, pt.y - origin.y);
-                else ctx.lineTo(pt.x - origin.x, pt.y - origin.y);
+                const x = pt.x - origin.x;
+                const y = pt.y - origin.y;
+                if (i === 0) ctx.moveTo(x, y);
+                else ctx.lineTo(x, y);
             });
-            ctx.closePath(); ctx.clip();
+            ctx.closePath();
+            ctx.clip();
         }
-        this._points.forEach(([lat, lon, intensity]) => {
-            const p = this._map.latLngToLayerPoint([lat, lon]);
-            ctx.fillStyle = `rgba(255, 0, 0, ${intensity})`;
-            ctx.fillRect(p.x - origin.x, p.y - origin.y, 10, 10);
-        });
+
+        for (const [lat, lon, intensity] of this._points) {
+            const pxNW = this._map.latLngToLayerPoint([lat + this._cellSize/2, lon - this._cellSize/2]);
+            const pxSE = this._map.latLngToLayerPoint([lat - this._cellSize/2, lon + this._cellSize/2]);
+            const x = pxNW.x - origin.x;
+            const y = pxNW.y - origin.y;
+            const w = Math.ceil(pxSE.x - pxNW.x) + 1;
+            const h = Math.ceil(pxSE.y - pxNW.y) + 1;
+            const [r,g,b] = tempToColor(intensity);
+            ctx.filter = 'blur(3px)';
+            ctx.fillStyle = `rgba(${r},${g},${b},0.65)`;
+            ctx.fillRect(x, y, w, h);
+        }
+
         ctx.restore();
+        ctx.filter = 'none';
+        this._canvas.style.opacity = '1';
     }
 });
 
 async function doLogin() {
-    const u = document.getElementById('username').value;
-    const p = document.getElementById('password').value;
-    const res = await fetch(`/api/login?username=${u}&password=${p}`, {method:'POST'});
-    if (res.ok) {
+    const u = document.getElementById('username').value.trim();
+    const p = document.getElementById('password').value.trim();
+    const err = document.getElementById('login-error');
+    err.textContent = '';
+    if (!u || !p) { err.textContent = 'ENTER CREDENTIALS'; return; }
+    try {
+        const res = await fetch(`/api/login?username=${encodeURIComponent(u)}&password=${encodeURIComponent(p)}`, {method:'POST'});
+        if (!res.ok) { err.textContent = 'ACCESS DENIED'; return; }
         const data = await res.json();
         currentVesselId = data.vessel_id;
         showApp();
-    } else { document.getElementById('login-error').textContent = 'Invalid login'; }
+    } catch(e) { err.textContent = 'CONNECTION ERROR'; }
+}
+
+function doLogout() {
+    currentVesselId = null;
+    document.getElementById('app-screen').style.display = 'none';
+    document.getElementById('login-screen').style.display = 'flex';
 }
 
 async function showApp() {
     document.getElementById('login-screen').style.display = 'none';
     document.getElementById('app-screen').style.display = 'flex';
+
     if (!map) {
-        map = L.map('map').setView([-34.0, 25.85], 10);
+        map = L.map('map', { zoomControl: true, attributionControl: false, zoomAnimation: false })
+                .setView([-34.0, 25.85], 10);
         L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png').addTo(map);
         heatLayer = new L.CanvasHeatOverlay().addTo(map);
+
         try {
             const res = await fetch('/api/coastline');
             const geojson = await res.json();
-            const coords = geojson.features.flatMap(f => 
-                f.geometry.type === 'Polygon' ? f.geometry.coordinates : 
-                f.geometry.type === 'MultiPolygon' ? f.geometry.coordinates[0] : []
-            );
-            if (coords.length) heatLayer.setPolygon(coords[0]);
-        } catch(e) { console.error('Clip load error', e); }
+            // Extracts the first available polygon ring from the Ocean GeoJSON
+            const feature = geojson.features[0];
+            const coords = feature.geometry.type === 'Polygon' 
+                ? feature.geometry.coordinates[0] 
+                : feature.geometry.coordinates[0][0];
+            heatLayer.setPolygon(coords);
+        } catch(e) { console.error('Clip error:', e); }
     }
-    updateLoop();
+    startUpdates();
 }
 
-function updateLoop() {
-    updateHeatmap(); setInterval(updateHeatmap, 30000);
+function startUpdates() {
+    updateHeatmap();
+    updateVessel();
+    setInterval(updateHeatmap, 30000);
+    setInterval(updateVessel, 10000);
 }
 
 async function updateHeatmap() {
-    const res = await fetch('/api/interpolated');
-    const points = await res.json();
-    if (points.length) heatLayer.setPoints(points);
+    try {
+        const res = await fetch('/api/interpolated');
+        const points = await res.json();
+        if (!points.length) return;
+        heatLayer.setPoints(points);
+        const MIN_TEMP = 16.0, MAX_TEMP = 24.0;
+        const temps = points.map(p => p[2] * (MAX_TEMP - MIN_TEMP) + MIN_TEMP);
+        document.getElementById('sst-range').textContent = `${Math.min(...temps).toFixed(1)}° — ${Math.max(...temps).toFixed(1)}°C`;
+        document.getElementById('grid-points').textContent = `${points.length} grid cells`;
+        document.getElementById('update-time').textContent = new Date().toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'});
+    } catch(e) { console.error(e); }
+}
+
+async function updateVessel() {
+    if (!currentVesselId) return;
+    try {
+        const res = await fetch(`/api/vessel/${currentVesselId}`);
+        if (!res.ok) return;
+        const d = await res.json();
+        const pos = [d.latitude, d.longitude];
+        if (!vesselMarker) {
+            vesselMarker = L.circleMarker(pos, { radius: 8, fillColor: '#00f2ff', color: '#ffffff', weight: 2, fillOpacity: 0.95 }).addTo(map);
+        } else { vesselMarker.setLatLng(pos); }
+        document.getElementById('sog-val').textContent = d.speed_over_ground.toFixed(1) + ' kts';
+        document.getElementById('stw-val').textContent = d.speed_through_water.toFixed(1) + ' kts';
+        const effEl = document.getElementById('eff-status');
+        effEl.textContent = d.efficiency_label;
+        effEl.className = d.efficiency;
+    } catch(e) { console.error(e); }
 }
 </script>
 </body>
