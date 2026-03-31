@@ -39,7 +39,7 @@ VESSEL_CREDENTIALS = {
 }
 VALID_API_KEYS = {"2026_Reeliq_dev18"}
 
-# --- OCEAN BOUNDARY (ALGOA BAY) ---
+# --- OCEAN BOUNDARY ---
 ALGOA_BAY_COORDS = [
     (24.869, -34.300), (24.869, -34.195), (24.841, -34.145), (24.912, -34.085),
     (25.034, -33.970), (25.213, -33.969), (25.402, -34.034), (25.584, -34.048),
@@ -82,7 +82,6 @@ async def get_coastline():
 
 @app.get("/api/interpolated")
 async def get_interpolated():
-    # This pulls the last 15 mins of data for the heatmap
     now_utc = datetime.now(timezone.utc).replace(tzinfo=None)
     cutoff = now_utc - timedelta(minutes=15)
     query = observations_table.select().where(observations_table.c.timestamp >= cutoff)
@@ -106,31 +105,56 @@ async def get_interpolated():
             result.append([round(lat, 4), round(lon, 4), round(intensity, 3)])
     return JSONResponse(result)
 
-@app.get("/app", response_class=HTMLResponse)
+@app.get("/api/vessel/{vessel_id}")
+async def get_vessel(vessel_id: str):
+    now_utc = datetime.now(timezone.utc).replace(tzinfo=None)
+    cutoff = now_utc - timedelta(minutes=5)
+    query = observations_table.select().where(
+        observations_table.c.vessel_id == vessel_id,
+        observations_table.c.timestamp >= cutoff
+    ).order_by(observations_table.c.timestamp.desc()).limit(1)
+    row = await database.fetch_one(query)
+    if not row: raise HTTPException(status_code=404)
+    return row
+
+@app.get("/", response_class=HTMLResponse)
 async def get_map():
     return r"""
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-    <title>REEL IQ | DASHBOARD</title>
-    <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@700;900&family=Share+Tech+Mono&display=swap" rel="stylesheet">
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+    <title>REEL IQ</title>
+    <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&family=Share+Tech+Mono&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     <style>
         :root {
             --brand-yellow: #ffb800;
-            --bg: #0b1a2a; 
+            --brand-yellow-dim: rgba(255, 184, 0, 0.1);
+            --bg: #0b1a2a;
             --panel: rgba(11, 26, 42, 0.95);
+            --text: #ffffff;
         }
-        body { margin:0; background: var(--bg); font-family: 'Share Tech Mono', monospace; color: white; overflow: hidden; }
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body { background: var(--bg); font-family: 'Share Tech Mono', monospace; color: var(--text); overflow: hidden; height: 100vh; }
+        
         #login-screen { position: fixed; inset: 0; z-index: 9999; background: var(--bg); display: flex; align-items: center; justify-content: center; flex-direction: column; }
-        .login-box { width: 350px; padding: 40px; border: 1px solid rgba(255,184,0,0.3); background: var(--panel); text-align: center; }
-        .login-logo { font-family: 'Orbitron'; color: var(--brand-yellow); font-size: 1.8rem; margin-bottom: 30px; letter-spacing: 0.1em; }
-        input { width: 100%; padding: 12px; margin: 10px 0; background: rgba(255,255,255,0.05); border: 1px solid rgba(255,184,0,0.2); color: white; }
-        .login-btn { width: 100%; padding: 12px; background: var(--brand-yellow); border: none; font-weight: bold; cursor: pointer; margin-top: 10px; }
-        #app-screen { display: none; height: 100vh; flex-direction: column; }
-        #map { flex: 1; }
-        #sst-panel { position: absolute; top: 20px; left: 20px; z-index: 1000; background: var(--panel); padding: 15px; border-left: 3px solid var(--brand-yellow); }
+        .login-box { width: min(400px, 90vw); padding: 40px; border: 1px solid var(--brand-yellow-dim); background: var(--panel); border-radius: 4px; text-align: center; }
+        .login-logo { font-family: 'Orbitron'; font-size: 2rem; color: var(--brand-yellow); margin-bottom: 30px; letter-spacing: 0.2em; }
+        .login-field input { width: 100%; padding: 12px; margin-bottom: 15px; background: rgba(255,255,255,0.05); border: 1px solid rgba(255,184,0,0.2); color: white; font-family: inherit; }
+        .login-btn { width: 100%; padding: 14px; background: var(--brand-yellow); border: none; font-family: 'Orbitron'; font-weight: 900; cursor: pointer; color: #000; }
+        
+        #app-screen { display: none; height: 100vh; flex-direction: column; position: relative; }
+        #map { flex: 1; background: #000; }
+        
+        #sst-panel { position: absolute; top: 20px; left: 20px; z-index: 1000; background: var(--panel); border-left: 3px solid var(--brand-yellow); padding: 12px 16px; }
+        .panel-label { font-size: 0.6rem; color: var(--brand-yellow); letter-spacing: 0.1em; margin-bottom: 4px; }
+        .panel-value { font-size: 1.2rem; font-weight: bold; }
+        
+        #efficiency-bar { position: absolute; bottom: 0; left: 0; right: 0; z-index: 1000; background: var(--panel); padding: 15px; display: flex; justify-content: space-around; border-top: 1px solid rgba(255,255,255,0.1); }
+        .eff-val { font-weight: bold; color: var(--brand-yellow); }
     </style>
 </head>
 <body>
@@ -138,28 +162,51 @@ async def get_map():
 <div id="login-screen">
     <div class="login-box">
         <div class="login-logo">REEL IQ</div>
-        <input type="text" id="username" placeholder="USERNAME">
-        <input type="password" id="password" placeholder="PASSWORD">
+        <div class="login-field"><input type="text" id="username" placeholder="USERNAME"></div>
+        <div class="login-field"><input type="password" id="password" placeholder="PASSWORD"></div>
         <button class="login-btn" onclick="doLogin()">ACCESS SYSTEM</button>
     </div>
 </div>
 
 <div id="app-screen">
     <div id="sst-panel">
-        <div style="font-size: 0.7rem; color: var(--brand-yellow);">SST RANGE</div>
-        <div id="sst-range" style="font-size: 1.2rem; font-weight: bold;">--</div>
+        <div class="panel-label">SST RANGE</div>
+        <div class="panel-value" id="sst-range">--°C</div>
     </div>
     <div id="map"></div>
+    <div id="efficiency-bar">
+        <div>SOG: <span id="sog-val" class="eff-val">--</span></div>
+        <div id="eff-status">Searching...</div>
+        <div>STW: <span id="stw-val" class="eff-val">--</span></div>
+    </div>
 </div>
 
 <script>
-let map, heatLayer, polygonCoords;
+let map, heatLayer, currentVesselId;
+
+function tempToColor(intensity) {
+    const stops = [
+        [0, [0, 0, 255]], [0.2, [0, 255, 255]], [0.45, [0, 255, 136]],
+        [0.65, [255, 255, 0]], [0.82, [255, 136, 0]], [1.0, [255, 0, 0]]
+    ];
+    let lower = stops[0], upper = stops[stops.length-1];
+    for (let i = 0; i < stops.length - 1; i++) {
+        if (intensity >= stops[i][0] && intensity <= stops[i+1][0]) {
+            lower = stops[i]; upper = stops[i+1]; break;
+        }
+    }
+    const t = (intensity - lower[0]) / (upper[0] - lower[0]);
+    return [
+        Math.round(lower[1][0] + t * (upper[1][0] - lower[1][0])),
+        Math.round(lower[1][1] + t * (upper[1][1] - lower[1][1])),
+        Math.round(lower[1][2] + t * (upper[1][2] - lower[1][2]))
+    ];
+}
 
 L.CanvasHeatOverlay = L.Layer.extend({
-    _points: [],
-    _cellSize: 0.027,
+    _points: [], _cellSize: 0.027, _poly: null,
     setPoints(pts) { this._points = pts; this._redraw(); },
-    setPolygon(coords) { this.polygonCoords = coords; this._redraw(); },
+    setPolygon(coords) { this._poly = coords; this._redraw(); },
     onAdd(map) {
         this._map = map;
         this._canvas = document.createElement('canvas');
@@ -175,11 +222,12 @@ L.CanvasHeatOverlay = L.Layer.extend({
         this._canvas.width = size.x; this._canvas.height = size.y;
         this._canvas.style.left = origin.x + 'px'; this._canvas.style.top = origin.y + 'px';
         const ctx = this._canvas.getContext('2d');
-        
+        ctx.clearRect(0, 0, size.x, size.y);
+
         ctx.save();
-        if (this.polygonCoords) {
+        if (this._poly) {
             ctx.beginPath();
-            this.polygonCoords.forEach(([lon, lat], i) => {
+            this._poly.forEach(([lon, lat], i) => {
                 const pt = this._map.latLngToLayerPoint([lat, lon]);
                 if (i === 0) ctx.moveTo(pt.x - origin.x, pt.y - origin.y);
                 else ctx.lineTo(pt.x - origin.x, pt.y - origin.y);
@@ -188,11 +236,12 @@ L.CanvasHeatOverlay = L.Layer.extend({
         }
 
         this._points.forEach(([lat, lon, intensity]) => {
-            const p = this._map.latLngToLayerPoint([lat, lon]);
-            const r = Math.round(intensity * 255);
-            ctx.fillStyle = `rgba(${r}, ${255-r}, 150, 0.6)`;
+            const nw = this._map.latLngToLayerPoint([lat + 0.0135, lon - 0.0135]);
+            const se = this._map.latLngToLayerPoint([lat - 0.0135, lon + 0.0135]);
+            const [r, g, b] = tempToColor(intensity);
+            ctx.fillStyle = `rgba(${r},${g},${b},0.7)`;
             ctx.filter = 'blur(4px)';
-            ctx.fillRect(p.x - origin.x, p.y - origin.y, 15, 15);
+            ctx.fillRect(nw.x - origin.x, nw.y - origin.y, se.x - nw.x, se.y - nw.y);
         });
         ctx.restore();
     }
@@ -203,6 +252,8 @@ async function doLogin() {
     const p = document.getElementById('password').value;
     const res = await fetch(`/api/login?username=${u}&password=${p}`, {method:'POST'});
     if (res.ok) {
+        const data = await res.json();
+        currentVesselId = data.vessel_id;
         document.getElementById('login-screen').style.display = 'none';
         document.getElementById('app-screen').style.display = 'flex';
         initMap();
@@ -210,30 +261,39 @@ async function doLogin() {
 }
 
 async function initMap() {
-    map = L.map('map').setView([-33.96, 25.6], 10);
+    map = L.map('map').setView([-34.0, 25.85], 10);
     L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png').addTo(map);
     heatLayer = new L.CanvasHeatOverlay().addTo(map);
-    
+
     const cRes = await fetch('/api/coastline');
     const geo = await cRes.json();
     heatLayer.setPolygon(geo.features[0].geometry.coordinates[0]);
-    
-    updateData();
+
+    setInterval(updateHeatmap, 30000);
+    setInterval(updateVessel, 10000);
+    updateHeatmap(); updateVessel();
 }
 
-async function updateData() {
+async function updateHeatmap() {
     const res = await fetch('/api/interpolated');
     const pts = await res.json();
     if (pts.length) {
         heatLayer.setPoints(pts);
-        document.getElementById('sst-range').innerText = "LIVE DATA ACTIVE";
+        const temps = pts.map(p => p[2] * 8 + 16);
+        document.getElementById('sst-range').textContent = `${Math.min(...temps).toFixed(1)}° - ${Math.max(...temps).toFixed(1)}°C`;
+    }
+}
+
+async function updateVessel() {
+    if (!currentVesselId) return;
+    const res = await fetch(`/api/vessel/${currentVesselId}`);
+    if (res.ok) {
+        const d = await res.json();
+        document.getElementById('sog-val').textContent = d.speed_over_ground.toFixed(1) + ' kts';
+        document.getElementById('stw-val').textContent = d.speed_through_water.toFixed(1) + ' kts';
     }
 }
 </script>
 </body>
 </html>
 """
-
-if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
