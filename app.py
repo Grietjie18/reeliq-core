@@ -1,4 +1,4 @@
-import os, uuid, json, re
+import asyncio, os, uuid, json, re
 import numpy as np
 from scipy.interpolate import RBFInterpolator
 from shapely.geometry import Point, Polygon
