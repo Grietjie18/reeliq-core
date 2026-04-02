@@ -97,6 +97,16 @@ async def startup():
         conn.execute(text("ALTER TABLE observations ADD COLUMN IF NOT EXISTS sea_surface_salinity FLOAT DEFAULT 35.2"))
         conn.execute(text("ALTER TABLE observations ADD COLUMN IF NOT EXISTS heading FLOAT DEFAULT 0.0"))
         conn.commit()
+    asyncio.create_task(cleanup_old_data())
+
+async def cleanup_old_data():
+    while True:
+        await asyncio.sleep(300)  # runs every 5 minutes
+        cutoff = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(hours=1)
+        await database.execute(
+            observations_table.delete().where(observations_table.c.timestamp < cutoff)
+        )
+        print("🧹 Old data cleaned up")
 
 @app.post("/ingest/{vessel_id}")
 async def ingest_data(vessel_id: str, data: Observation, api_key: str = Query(...)):
