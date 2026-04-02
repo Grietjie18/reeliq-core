@@ -8,7 +8,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import HTMLResponse, JSONResponse
 from pydantic import BaseModel, Field
 from databases import Database
-from sqlalchemy import create_engine, MetaData, Table, Column, Float, String, DateTime
+from sqlalchemy import create_engine, MetaData, Table, Column, Float, String, DateTime, text
 
 app = FastAPI()
 app.mount("/static", StaticFiles(directory="static"), name="static")
@@ -91,6 +91,10 @@ async def startup():
     await database.connect()
     engine = create_engine(DATABASE_URL)
     metadata.create_all(engine)
+    # Add salinity column if it doesn't exist
+    with engine.connect() as conn:
+        conn.execute(text("ALTER TABLE observations ADD COLUMN IF NOT EXISTS sea_surface_salinity FLOAT DEFAULT 35.2"))
+        conn.commit()
 
 @app.post("/ingest/{vessel_id}")
 async def ingest_data(vessel_id: str, data: Observation, api_key: str = Query(...)):
