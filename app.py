@@ -28,6 +28,7 @@ observations_table = Table(
     Column("latitude", Float),
     Column("longitude", Float),
     Column("sea_surface_temperature", Float),
+    Column("sea_surface_salinity", Float),   # <-- NEW
     Column("speed_over_ground", Float),
     Column("speed_through_water", Float)
 )
@@ -62,6 +63,7 @@ class Observation(BaseModel):
     latitude: float
     longitude: float
     sea_surface_temperature: float
+    sea_surface_salinity: float = Field(default=35.2)   # <-- NEW (default for old clients)
     speed_over_ground: float
     speed_through_water: float
 
@@ -101,6 +103,7 @@ async def ingest_data(vessel_id: str, data: Observation, api_key: str = Query(..
         latitude=data.latitude,
         longitude=data.longitude,
         sea_surface_temperature=data.sea_surface_temperature,
+        sea_surface_salinity=data.sea_surface_salinity,
         speed_over_ground=data.speed_over_ground,
         speed_through_water=data.speed_through_water
     )
@@ -114,7 +117,6 @@ async def login(username: str = Query(...), password: str = Query(...)):
             return {"status": "ok", "vessel_id": vessel_id}
     raise HTTPException(status_code=401, detail="Invalid credentials")
 
-# --- NEW COASTLINE ENDPOINT ---
 @app.get("/api/coastline")
 async def get_coastline():
     try:
@@ -127,37 +129,63 @@ async def get_coastline():
 async def get_polygon():
     return JSONResponse(ALGOA_BAY_COORDS)
 
+# --- UNIFIED INTERPOLATION ENDPOINT (SST + Salinity) ---
 @app.get("/api/interpolated")
-async def get_interpolated():
+async def get_interpolated(variable: str = Query(default="sst")):
+    """
+    Returns interpolated heatmap grid.
+    variable: "sst" (default) or "salinity"
+    """
     now_utc = datetime.now(timezone.utc).replace(tzinfo=None)
     cutoff = now_utc - timedelta(minutes=15)
     query = observations_table.select().where(observations_table.c.timestamp >= cutoff)
     rows = await database.fetch_all(query)
-    satellite_points = await get_satellite_sst()
 
-    all_lats, all_lons, all_temps = [], [], []
-    for lat, lon, temp in satellite_points:
-        all_lats.append(lat); all_lons.append(lon); all_temps.append(temp)
-    for r in rows:
-        for _ in range(3):
-            all_lats.append(r['latitude']); all_lons.append(r['longitude']); all_temps.append(r['sea_surface_temperature'])
+    all_lats, all_lons, all_values = [], [], []
 
-    if len(all_lats) < 3: return JSONResponse([])
+    if variable == "sst":
+        # Fuse satellite SST + vessel observations
+        satellite_points = await get_satellite_sst()
+        for lat, lon, temp in satellite_points:
+            all_lats.append(lat); all_lons.append(lon); all_values.append(temp)
+        for r in rows:
+            for _ in range(3):  # upweight vessel obs
+                all_lats.append(r['latitude'])
+                all_lons.append(r['longitude'])
+                all_values.append(r['sea_surface_temperature'])
+        VAL_MIN, VAL_MAX = 16.0, 24.0
+
+    elif variable == "salinity":
+        for r in rows:
+            sal = r['sea_surface_salinity']
+            if sal is not None:
+                for _ in range(3):
+                    all_lats.append(r['latitude'])
+                    all_lons.append(r['longitude'])
+                    all_values.append(sal)
+        VAL_MIN, VAL_MAX = 34.5, 35.6
+
+    else:
+        raise HTTPException(status_code=400, detail="variable must be 'sst' or 'salinity'")
+
+    if len(all_lats) < 3:
+        return JSONResponse([])
 
     obs_coords = np.column_stack([all_lats, all_lons])
-    obs_temps = np.array(all_temps)
+    obs_values = np.array(all_values)
     grid_lats = np.linspace(-34.300, -33.700, 60)
     grid_lons = np.linspace(24.840, 26.360, 60)
 
-    interpolator = RBFInterpolator(obs_coords, obs_temps, kernel='thin_plate_spline', smoothing=1.5)
+    interpolator = RBFInterpolator(obs_coords, obs_values, kernel='thin_plate_spline', smoothing=1.5)
 
     result = []
     for lat in grid_lats:
         for lon in grid_lons:
             if not is_ocean(lon, lat): continue
-            temp = float(interpolator([[lat, lon]])[0])
-            intensity = max(0.0, min(1.0, (temp - 16.0) / (24.0 - 16.0)))
+            val = float(interpolator([[lat, lon]])[0])
+            intensity = max(0.0, min(1.0, (val - VAL_MIN) / (VAL_MAX - VAL_MIN)))
             result.append([round(lat, 4), round(lon, 4), round(intensity, 3)])
+
     return JSONResponse(result)
 
 @app.get("/api/vessel/{vessel_id}")
@@ -182,7 +210,9 @@ async def get_vessel(vessel_id: str):
 
     return {
         "vessel_id": vessel_id, "latitude": row['latitude'], "longitude": row['longitude'],
-        "sea_surface_temperature": row['sea_surface_temperature'], "speed_over_ground": sog,
+        "sea_surface_temperature": row['sea_surface_temperature'],
+        "sea_surface_salinity": row['sea_surface_salinity'],
+        "speed_over_ground": sog,
         "speed_through_water": stw, "efficiency": eff, "efficiency_label": label,
         "timestamp": row['timestamp'].isoformat()
     }
@@ -306,14 +336,50 @@ async def get_map():
             background: var(--good); margin-right: 6px; animation: pulse 1.5s infinite;
         }
         @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
+
+        /* --- LAYER TOGGLE --- */
+        #layer-toggle {
+            position: absolute; top: 60px; left: 50%; transform: translateX(-50%);
+            z-index: 1001;
+            display: flex;
+            border: 1px solid var(--cyan-border);
+            border-radius: 3px;
+            overflow: hidden;
+            background: var(--panel);
+        }
+        .layer-btn {
+            padding: 7px 18px;
+            font-family: 'Share Tech Mono', monospace;
+            font-size: 0.65rem; letter-spacing: 0.15em;
+            text-transform: uppercase; cursor: pointer;
+            border: none; background: transparent;
+            color: rgba(0,242,255,0.45);
+            transition: background 0.15s, color 0.15s;
+        }
+        .layer-btn.active {
+            background: var(--cyan-dim);
+            color: var(--cyan);
+        }
+        .layer-btn + .layer-btn {
+            border-left: 1px solid var(--cyan-border);
+        }
+
+        /* --- LEGEND --- */
         #legend {
             position: absolute; top: 60px; right: 16px; z-index: 1000;
             background: var(--panel); border: 1px solid rgba(255,255,255,0.08);
             border-radius: 4px; padding: 12px 10px;
         }
-        .legend-bar {
+        /* SST gradient (warm colours) */
+        .legend-bar-sst {
             width: 12px; height: 160px;
             background: linear-gradient(to top, #0000ff 0%, #00ffff 25%, #00ff88 45%, #ffff00 65%, #ff8800 82%, #ff0000 100%);
+            border-radius: 2px;
+        }
+        /* Salinity gradient (blue shades: low=fresh/teal, high=deep blue) */
+        .legend-bar-sal {
+            width: 12px; height: 160px;
+            background: linear-gradient(to top, #00bfff 0%, #0077cc 35%, #003d99 65%, #001a66 100%);
             border-radius: 2px;
         }
         .legend-labels {
@@ -322,6 +388,7 @@ async def get_map():
         }
         .legend-row { display: flex; align-items: flex-start; gap: 6px; }
         .legend-title { font-size: 0.55rem; color: rgba(255,255,255,0.3); letter-spacing: 0.1em; text-align: center; margin-bottom: 6px; }
+
         #sst-panel {
             position: absolute; top: 60px; left: 16px; z-index: 1000;
             background: var(--panel); border: 1px solid var(--cyan-border);
@@ -330,6 +397,7 @@ async def get_map():
         .panel-label { font-size: 0.6rem; color: rgba(0,242,255,0.5); letter-spacing: 0.15em; text-transform: uppercase; margin-bottom: 4px; }
         .panel-value { font-size: 1.1rem; color: var(--cyan); font-weight: bold; }
         .panel-sub { font-size: 0.6rem; color: rgba(255,255,255,0.3); margin-top: 2px; }
+
         #efficiency-bar {
             position: absolute; bottom: 0; left: 0; right: 0; z-index: 1000;
             background: var(--panel); border-top: 1px solid rgba(255,255,255,0.08);
@@ -343,6 +411,7 @@ async def get_map():
         #eff-status.good { color: var(--good); }
         #eff-status.poor { color: var(--bad); }
         #eff-status.neutral { color: var(--warn); }
+
         #logout-btn {
             position: absolute; bottom: 68px; right: 16px; z-index: 1001;
             background: transparent; border: 1px solid rgba(255,255,255,0.15);
@@ -382,22 +451,32 @@ async def get_map():
             <span id="update-time">—</span>
         </div>
     </div>
+
+    <!-- Layer toggle -->
+    <div id="layer-toggle">
+        <button class="layer-btn active" id="btn-sst" onclick="switchLayer('sst')">SST</button>
+        <button class="layer-btn" id="btn-salinity" onclick="switchLayer('salinity')">SALINITY</button>
+    </div>
+
     <div id="sst-panel">
-        <div class="panel-label">SST Range</div>
-        <div class="panel-value" id="sst-range">—</div>
+        <div class="panel-label" id="panel-label">SST Range</div>
+        <div class="panel-value" id="panel-value">—</div>
         <div class="panel-sub" id="grid-points">Loading thermal grid...</div>
     </div>
+
     <div id="legend">
-        <div class="legend-title">SST °C</div>
+        <div class="legend-title" id="legend-title">SST °C</div>
         <div class="legend-row">
-            <div class="legend-bar"></div>
-            <div class="legend-labels">
+            <div id="legend-bar" class="legend-bar-sst"></div>
+            <div class="legend-labels" id="legend-labels">
                 <span>24°</span><span>22°</span><span>20°</span>
                 <span>19°</span><span>18°</span><span>16°</span>
             </div>
         </div>
     </div>
+
     <div id="map"></div>
+
     <div id="efficiency-bar">
         <div class="eff-block">
             <div class="eff-label">SOG</div>
@@ -419,9 +498,10 @@ let currentVesselId = null;
 let map = null;
 let heatLayer = null;
 let vesselMarker = null;
-let oceanPolygonCoords = null; 
+let currentLayer = 'sst';   // 'sst' or 'salinity'
 
-function tempToColor(intensity) {
+// ---- Colour maps ----
+function sstColor(intensity) {
     const stops = [
         [0,   [0,   0,   255]],
         [0.2, [0,   255, 255]],
@@ -430,6 +510,21 @@ function tempToColor(intensity) {
         [0.82,[255, 136, 0  ]],
         [1.0, [255, 0,   0  ]],
     ];
+    return interpColor(stops, intensity);
+}
+
+function salinityColor(intensity) {
+    // Low salinity (fresh) → teal/light-blue; high salinity → deep navy
+    const stops = [
+        [0.0, [0,   191, 255]],   // #00bfff  fresh/river plume
+        [0.35,[0,   119, 204]],   // #0077cc
+        [0.65,[0,   61,  153]],   // #003d99
+        [1.0, [0,   26,  102]],   // #001a66  salty Agulhas
+    ];
+    return interpColor(stops, intensity);
+}
+
+function interpColor(stops, intensity) {
     let lower = stops[0], upper = stops[stops.length-1];
     for (let i = 0; i < stops.length - 1; i++) {
         if (intensity >= stops[i][0] && intensity <= stops[i+1][0]) {
@@ -437,19 +532,22 @@ function tempToColor(intensity) {
         }
     }
     const t = (intensity - lower[0]) / (upper[0] - lower[0]);
-    const r = Math.round(lower[1][0] + t * (upper[1][0] - lower[1][0]));
-    const g = Math.round(lower[1][1] + t * (upper[1][1] - lower[1][1]));
-    const b = Math.round(lower[1][2] + t * (upper[1][2] - lower[1][2]));
-    return [r, g, b];
+    return [
+        Math.round(lower[1][0] + t * (upper[1][0] - lower[1][0])),
+        Math.round(lower[1][1] + t * (upper[1][1] - lower[1][1])),
+        Math.round(lower[1][2] + t * (upper[1][2] - lower[1][2])),
+    ];
 }
 
 L.CanvasHeatOverlay = L.Layer.extend({
     _points: [],
     _cellSize: 0.027,
-    _polygonCoords: null, 
+    _polygonCoords: null,
+    _colorFn: sstColor,
 
     setPoints(pts) { this._points = pts; this._redraw(); },
     setPolygon(coords) { this._polygonCoords = coords; this._redraw(); },
+    setColorFn(fn) { this._colorFn = fn; this._redraw(); },
 
     onAdd(map) {
         this._map = map;
@@ -473,10 +571,8 @@ L.CanvasHeatOverlay = L.Layer.extend({
 
         const ctx = this._canvas.getContext('2d');
         ctx.clearRect(0, 0, size.x, size.y);
-
         ctx.save();
-        
-        // --- COASTLINE CLIPPING FIX ---
+
         if (this._polygonCoords) {
             ctx.beginPath();
             this._polygonCoords.forEach(([lon, lat], i) => {
@@ -497,7 +593,7 @@ L.CanvasHeatOverlay = L.Layer.extend({
             const y = pxNW.y - origin.y;
             const w = Math.ceil(pxSE.x - pxNW.x) + 1;
             const h = Math.ceil(pxSE.y - pxNW.y) + 1;
-            const [r,g,b] = tempToColor(intensity);
+            const [r,g,b] = this._colorFn(intensity);
             ctx.filter = 'blur(3px)';
             ctx.fillStyle = `rgba(${r},${g},${b},0.65)`;
             ctx.fillRect(x, y, w, h);
@@ -505,10 +601,46 @@ L.CanvasHeatOverlay = L.Layer.extend({
 
         ctx.restore();
         ctx.filter = 'none';
-        this._canvas.style.opacity = '1';
     }
 });
 
+// ---- Layer switch ----
+function switchLayer(layer) {
+    if (layer === currentLayer) return;
+    currentLayer = layer;
+
+    // Toggle button styles
+    document.getElementById('btn-sst').classList.toggle('active', layer === 'sst');
+    document.getElementById('btn-salinity').classList.toggle('active', layer === 'salinity');
+
+    // Update colour function on the heat layer
+    if (heatLayer) heatLayer.setColorFn(layer === 'sst' ? sstColor : salinityColor);
+
+    // Update legend
+    const bar = document.getElementById('legend-bar');
+    const labels = document.getElementById('legend-labels');
+    const title = document.getElementById('legend-title');
+    const panelLabel = document.getElementById('panel-label');
+
+    if (layer === 'sst') {
+        bar.className = 'legend-bar-sst';
+        title.textContent = 'SST °C';
+        panelLabel.textContent = 'SST Range';
+        labels.innerHTML = '<span>24°</span><span>22°</span><span>20°</span><span>19°</span><span>18°</span><span>16°</span>';
+    } else {
+        bar.className = 'legend-bar-sal';
+        title.textContent = 'SALINITY PSU';
+        panelLabel.textContent = 'Salinity Range';
+        labels.innerHTML = '<span>35.6</span><span>35.4</span><span>35.2</span><span>35.0</span><span>34.8</span><span>34.5</span>';
+    }
+
+    // Reload the heatmap for the new variable
+    document.getElementById('panel-value').textContent = '—';
+    document.getElementById('grid-points').textContent = 'Refreshing...';
+    updateHeatmap();
+}
+
+// ---- Auth ----
 async function doLogin() {
     const u = document.getElementById('username').value.trim();
     const p = document.getElementById('password').value.trim();
@@ -543,10 +675,9 @@ async function showApp() {
         try {
             const res = await fetch('/api/coastline');
             const geojson = await res.json();
-            // Extracts the first available polygon ring from the Ocean GeoJSON
             const feature = geojson.features[0];
-            const coords = feature.geometry.type === 'Polygon' 
-                ? feature.geometry.coordinates[0] 
+            const coords = feature.geometry.type === 'Polygon'
+                ? feature.geometry.coordinates[0]
                 : feature.geometry.coordinates[0][0];
             heatLayer.setPolygon(coords);
         } catch(e) { console.error('Clip error:', e); }
@@ -563,15 +694,27 @@ function startUpdates() {
 
 async function updateHeatmap() {
     try {
-        const res = await fetch('/api/interpolated');
+        const res = await fetch(`/api/interpolated?variable=${currentLayer}`);
         const points = await res.json();
         if (!points.length) return;
+
         heatLayer.setPoints(points);
-        const MIN_TEMP = 16.0, MAX_TEMP = 24.0;
-        const temps = points.map(p => p[2] * (MAX_TEMP - MIN_TEMP) + MIN_TEMP);
-        document.getElementById('sst-range').textContent = `${Math.min(...temps).toFixed(1)}° — ${Math.max(...temps).toFixed(1)}°C`;
+
+        if (currentLayer === 'sst') {
+            const MIN = 16.0, MAX = 24.0;
+            const vals = points.map(p => p[2] * (MAX - MIN) + MIN);
+            document.getElementById('panel-value').textContent =
+                `${Math.min(...vals).toFixed(1)}° — ${Math.max(...vals).toFixed(1)}°C`;
+        } else {
+            const MIN = 34.5, MAX = 35.6;
+            const vals = points.map(p => p[2] * (MAX - MIN) + MIN);
+            document.getElementById('panel-value').textContent =
+                `${Math.min(...vals).toFixed(2)} — ${Math.max(...vals).toFixed(2)} PSU`;
+        }
+
         document.getElementById('grid-points').textContent = `${points.length} grid cells`;
-        document.getElementById('update-time').textContent = new Date().toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'});
+        document.getElementById('update-time').textContent =
+            new Date().toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'});
     } catch(e) { console.error(e); }
 }
 
@@ -583,7 +726,9 @@ async function updateVessel() {
         const d = await res.json();
         const pos = [d.latitude, d.longitude];
         if (!vesselMarker) {
-            vesselMarker = L.circleMarker(pos, { radius: 8, fillColor: '#00f2ff', color: '#ffffff', weight: 2, fillOpacity: 0.95 }).addTo(map);
+            vesselMarker = L.circleMarker(pos, {
+                radius: 8, fillColor: '#00f2ff', color: '#ffffff', weight: 2, fillOpacity: 0.95
+            }).addTo(map);
         } else { vesselMarker.setLatLng(pos); }
         document.getElementById('sog-val').textContent = d.speed_over_ground.toFixed(1) + ' kts';
         document.getElementById('stw-val').textContent = d.speed_through_water.toFixed(1) + ' kts';
