@@ -671,7 +671,7 @@ L.CanvasHeatOverlay = L.Layer.extend({
         this._canvas = document.createElement('canvas');
         this._canvas.style.cssText = 'position:absolute;pointer-events:none;';
         map.getPanes().overlayPane.appendChild(this._canvas);
-        map.on('move zoom resize', this._redraw, this);
+        map.on('zoomend moveend resize', this._redraw, this);
         this._redraw();
     },
 
@@ -706,7 +706,7 @@ L.CanvasHeatOverlay = L.Layer.extend({
             const w = Math.ceil(pxSE.x - pxNW.x) + 1;
             const h = Math.ceil(pxSE.y - pxNW.y) + 1;
             const [r,g,b] = this._colorFn(intensity);
-            ctx.filter = 'blur(3px)';
+            ctx.filter = 'none';
             ctx.fillStyle = `rgba(${r},${g},${b},0.65)`;
             ctx.fillRect(x, y, w, h);
         }
